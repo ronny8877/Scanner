@@ -1,0 +1,12 @@
+# Binaries
+bin/
+scanner
+
+# Node / Svelte build artifacts
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Local runtime state
+.DS_Store
+*.log

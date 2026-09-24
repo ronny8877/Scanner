@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+:root {
+  --bg-paper: #f4f1e9;
+  --bg-surface: #fffdf8;
+  --bg-muted: #ebe6da;
+  --ink: #19231f;
+  --ink-secondary: #48534e;
+  --ink-muted: #6d7873;
+  --border-ink: rgba(25, 35, 31, 0.12);
+  --border-strong: #19231f;
+
+  --accent-lime: #dffc78;
+  --accent-lilac: #d9d6fc;
+  --accent-peach: #ffc3a5;
+  --accent-blue: #5366e8;
+}
+
+@layer base {
+  html {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    color: var(--ink);
+    background-color: var(--bg-paper);
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    min-block-size: 100dvh;
+    overflow-x: clip;
+    background-color: var(--bg-paper);
+    background-image:
+      radial-gradient(rgba(25, 35, 31, 0.055) 1px, transparent 1px);
+    background-size: 24px 24px;
+    color: var(--ink);
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: -0.025em;
+  }
+
+  .font-serif-editorial {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: 2px;
+  }
+}
+
+/* Studio Bento Surface Primitives */
+.bento-card {
+  background-color: var(--bg-surface);
+  border: 1.5px solid rgba(25, 35, 31, 0.13);
+  border-radius: 1.35rem;
+  box-shadow: 0 2px 0 rgba(25, 35, 31, 0.05), 0 12px 32px -12px rgba(25, 35, 31, 0.05);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 180ms ease,
+              box-shadow 180ms ease;
+}
+
+.bento-card-interactive:hover {
+  border-color: rgba(25, 35, 31, 0.32);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 0 rgba(25, 35, 31, 0.08), 0 18px 36px -14px rgba(25, 35, 31, 0.09);
+}
+
+.bento-card-ink {
+  background-color: var(--ink);
+  color: var(--bg-surface);
+  border: 1.5px solid var(--ink);
+  border-radius: 1.35rem;
+}
+
+.studio-label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-secondary);
+}
+
+.studio-pill {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  border-radius: 9999px;
+  border: 1.5px solid rgba(25, 35, 31, 0.16);
+  transition: all 150ms ease;
+}
+
+.studio-btn-primary {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  background-color: var(--accent-lime);
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-radius: 9999px;
+  box-shadow: 0 3px 0 var(--ink);
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.studio-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 var(--ink);
+  background-color: #e6fe8e;
+}
+
+.studio-btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+
+.studio-btn-ink {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  background-color: var(--ink);
+  color: var(--bg-surface);
+  border: 1.5px solid var(--ink);
+  border-radius: 9999px;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.studio-btn-ink:hover:not(:disabled) {
+  transform: translateY(-1px);
+  opacity: 0.92;
+}
+
+.scroll-panel {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .bento-card-interactive:hover,
+  .studio-btn-primary:hover:not(:disabled) {
+    transform: none !important;
+  }
+}
