@@ -13,6 +13,35 @@ import type {
 
 const API_BASE = 'http://localhost:8080';
 
+let currentAbortController: AbortController | null = null;
+
+function createSignal(): AbortSignal {
+  if (currentAbortController) {
+    currentAbortController.abort();
+  }
+  currentAbortController = new AbortController();
+  return currentAbortController.signal;
+}
+
+export async function cancelRunningJob(jobId = 'all'): Promise<Job[]> {
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/jobs/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: jobId }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.jobs ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function checkBackendHealth(): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(2000) });
@@ -25,22 +54,26 @@ export async function checkBackendHealth(): Promise<boolean> {
 export async function runDomainScan(params: {
   keywords: string[];
   tlds: string[];
+  dictionaryPack?: string;
   mutations: boolean;
   onlyAvailable: boolean;
   minScore: number;
 }): Promise<{ report: ScanReport; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
     const res = await fetch(`${API_BASE}/api/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify({
         keywords: params.keywords,
         tlds: params.tlds,
+        dictionaryPack: params.dictionaryPack || '',
         mutations: params.mutations,
         onlyAvailable: params.onlyAvailable,
         minScore: params.minScore,
-        concurrency: 16,
-        maxResults: 48,
+        concurrency: 18,
+        maxResults: 64,
       }),
     });
     if (!res.ok) throw new Error('Backend scan failed');
@@ -52,8 +85,9 @@ export async function runDomainScan(params: {
 }
 
 export async function runDomainInspect(domainInput: string): Promise<{ inquiry: DomainInquiry; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
-    const res = await fetch(`${API_BASE}/api/inspect?domain=${encodeURIComponent(domainInput)}`);
+    const res = await fetch(`${API_BASE}/api/inspect?domain=${encodeURIComponent(domainInput)}`, { signal });
     if (!res.ok) throw new Error('Backend inspect failed');
     const inquiry: DomainInquiry = await res.json();
     return { inquiry, liveBackend: true };
@@ -63,8 +97,9 @@ export async function runDomainInspect(domainInput: string): Promise<{ inquiry: 
 }
 
 export async function runDomainHistory(domainInput: string): Promise<{ history: HistoryReport; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
-    const res = await fetch(`${API_BASE}/api/history?domain=${encodeURIComponent(domainInput)}`);
+    const res = await fetch(`${API_BASE}/api/history?domain=${encodeURIComponent(domainInput)}`, { signal });
     if (!res.ok) throw new Error('Backend history failed');
     const history: HistoryReport = await res.json();
     return { history, liveBackend: true };
@@ -74,8 +109,9 @@ export async function runDomainHistory(domainInput: string): Promise<{ history: 
 }
 
 export async function runPortRecon(domainInput: string): Promise<{ recon: ReconReport; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
-    const res = await fetch(`${API_BASE}/api/recon?domain=${encodeURIComponent(domainInput)}`);
+    const res = await fetch(`${API_BASE}/api/recon?domain=${encodeURIComponent(domainInput)}`, { signal });
     if (!res.ok) throw new Error('Backend recon failed');
     const recon: ReconReport = await res.json();
     return { recon, liveBackend: true };
@@ -89,10 +125,12 @@ export async function runSiteCrawl(params: {
   maxPages: number;
   maxDepth: number;
 }): Promise<{ report: CrawlReport; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
     const res = await fetch(`${API_BASE}/api/crawl`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify(params),
     });
     if (!res.ok) throw new Error('Backend crawl failed');
@@ -106,10 +144,12 @@ export async function runSiteCrawl(params: {
 export async function runFullParallelSuite(
   domainInput: string
 ): Promise<{ suite: ParallelSuiteResult; liveBackend: boolean }> {
+  const signal = createSignal();
   try {
     const res = await fetch(`${API_BASE}/api/parallel-suite`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify({ domain: domainInput }),
     });
     if (!res.ok) throw new Error('Parallel suite failed');
@@ -184,7 +224,7 @@ export async function saveDomainToVault(params: {
         domain: clean,
         available: params.available ?? true,
         status: params.available ? 'Available' : 'Registered',
-        valuation: evaluateLocal(clean),
+        valuation: evaluateLocal(clean, params.available ?? true),
         notes: params.notes || 'Saved in studio session',
         tags: params.tags?.length ? params.tags : ['Shortlist'],
         savedAt: now,
@@ -224,35 +264,66 @@ export async function recheckWatchlistParallel(): Promise<SavedDomain[]> {
   }
 }
 
-// --- Client-side fallback synthesis ---
+// --- Client-side fallback synthesis with calibrated pricing ---
 
-function evaluateLocal(domainStr: string): Valuation {
+const tldRegFees: Record<string, number> = {
+  com: 10, ai: 68, io: 38, dev: 12, co: 24, app: 14, net: 12, org: 11,
+  sh: 32, gg: 42, so: 48, cloud: 16, tech: 14, studio: 22, design: 28,
+  tools: 24, codes: 28, xyz: 2, me: 16, vc: 55, finance: 35, store: 8, shop: 8,
+};
+
+function evaluateLocal(domainStr: string, isAvailable = true): Valuation {
   const [name = 'nova', tld = 'com'] = domainStr.toLowerCase().split('.');
-  const lenScore = name.length <= 5 ? 28 : name.length <= 8 ? 22 : 14;
-  const tldMap: Record<string, number> = { com: 25, ai: 24, io: 21, dev: 19, co: 18, app: 18 };
-  const tldScore = tldMap[tld] ?? 12;
+  const regFee = tldRegFees[tld] ?? 12;
+  const lenScore = name.length <= 4 ? 27 : name.length <= 6 ? 23 : name.length <= 8 ? 18 : 12;
+  const tldMap: Record<string, number> = { com: 25, ai: 24, io: 21, dev: 19, co: 19, app: 18 };
+  const tldScore = tldMap[tld] ?? 14;
   const phoneticScore = 21;
-  const keywordScore = 16;
-  const score = Math.min(100, lenScore + tldScore + phoneticScore + keywordScore);
-  const tier =
-    score >= 85 ? 'Ultra Premium' : score >= 74 ? 'High Value' : score >= 62 ? 'Brandable' : 'Standard';
-  const minUsd = score >= 85 ? 2800 : score >= 74 ? 850 : 220;
-  const maxUsd = score >= 85 ? 7400 : score >= 74 ? 2600 : 680;
+  const keywordScore = 15;
+  const score = Math.min(99, lenScore + tldScore + phoneticScore + keywordScore);
+
+  let tier = 'High-Potential Brandable';
+  let minUsd = 95;
+  let maxUsd = 340;
+  let estimatedDisplay = `$${regFee}/yr · Flip $${minUsd}–$${maxUsd}`;
+
+  if (isAvailable) {
+    if (score >= 84) {
+      tier = 'Prime Unclaimed Gem';
+      minUsd = 350;
+      maxUsd = 1250;
+      estimatedDisplay = `$${regFee}/yr · Flip $350–$1,250`;
+    }
+  } else {
+    if (name.length <= 5 && tld === 'com') {
+      tier = 'Institutional .COM Asset';
+      minUsd = 35000;
+      maxUsd = 140000;
+      estimatedDisplay = '$35,000 - $140,000+';
+    } else {
+      tier = 'Established Brand Domain';
+      minUsd = 1200;
+      maxUsd = 4200;
+      estimatedDisplay = '$1,200 - $4,200';
+    }
+  }
 
   return {
     score,
     tier,
+    regFeeUsd: regFee,
+    regFeeDisplay: `$${regFee}/yr Reg`,
     estimatedMinUsd: minUsd,
     estimatedMaxUsd: maxUsd,
-    estimatedDisplay: `$${minUsd.toLocaleString()} - $${maxUsd.toLocaleString()}`,
+    estimatedDisplay,
     lengthScore: lenScore,
     tldScore,
     phoneticScore,
     keywordScore,
     highlights: [
       name.length <= 7 ? `Compact ${name.length}-letter root` : 'Clean brandable cadence',
-      tld === 'com' ? 'Flagship .com extension' : `High-demand .${tld} tech TLD`,
-      'Clean phonetic structure (no hyphens/digits)',
+      tld === 'com' ? `Global .com standard ($${regFee}/yr reg)` : `.${tld} tech extension ($${regFee}/yr reg)`,
+      'Natural vowel-consonant phonetic cadence',
     ],
   };
 }
@@ -260,12 +331,13 @@ function evaluateLocal(domainStr: string): Valuation {
 function synthesizeScanReport(params: {
   keywords: string[];
   tlds: string[];
+  dictionaryPack?: string;
   mutations: boolean;
   onlyAvailable: boolean;
   minScore: number;
 }): ScanReport {
   const seeds = params.keywords.length ? params.keywords : ['veltrix', 'nova'];
-  const suffixes = params.mutations ? ['', 'hq', 'labs', 'flow', 'grid', 'core', 'cloud'] : [''];
+  const suffixes = params.mutations ? ['', 'hq', 'labs', 'flow', 'grid', 'core', 'studio'] : [''];
   const items: ScanResultItem[] = [];
 
   for (const seed of seeds) {
@@ -274,8 +346,8 @@ function synthesizeScanReport(params: {
       const root = `${clean}${sfx}`;
       for (const tld of params.tlds) {
         const full = `${root}.${tld}`;
-        const val = evaluateLocal(full);
         const available = sfx !== '' || tld === 'ai' || tld === 'dev' || root.length >= 7;
+        const val = evaluateLocal(full, available);
         if (params.onlyAvailable && !available) continue;
         if (params.minScore > 0 && val.score < params.minScore) continue;
 
@@ -301,10 +373,11 @@ function synthesizeScanReport(params: {
   const availableCount = items.filter((i) => i.available).length;
   return {
     seedKeywords: seeds,
+    dictionaryUsed: params.dictionaryPack,
     totalChecked: items.length,
     availableCount,
     takenCount: items.length - availableCount,
-    highValueCount: items.filter((i) => i.available && i.valuation.score >= 74).length,
+    highValueCount: items.filter((i) => i.available && i.valuation.score >= 73).length,
     durationMs: 240,
     items,
   };
@@ -313,18 +386,21 @@ function synthesizeScanReport(params: {
 function synthesizeDomainInquiry(raw: string): DomainInquiry {
   const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   const full = clean.includes('.') ? clean : `${clean}.com`;
-  const isAvailable = full.includes('hq') || full.includes('veltrix') || full.endsWith('.ai');
+  const isAvailable = full.includes('hq') || full.includes('veltrix');
   return {
     domain: full,
     available: isAvailable,
     statusSummary: isAvailable ? 'Available' : 'Registered',
-    registeredAt: isAvailable ? undefined : '2016-04-18T14:22:10Z',
+    liveSiteUrl: `https://${full}`,
+    waybackCalendarUrl: `https://web.archive.org/web/*/${full}`,
+    registeredAt: isAvailable ? undefined : '2008-08-15T14:22:10Z',
     updatedAt: isAvailable ? undefined : '2025-11-02T09:15:00Z',
-    expiresAt: isAvailable ? undefined : '2028-04-18T14:22:10Z',
-    domainAge: isAvailable ? undefined : '10y 5m (3,811 days)',
-    daysToExpiry: isAvailable ? undefined : 572,
+    expiresAt: isAvailable ? undefined : '2028-08-15T14:22:10Z',
+    domainAge: isAvailable ? undefined : '18y 1m (6,615 days)',
+    daysToExpiry: isAvailable ? undefined : 689,
     registrar: isAvailable ? undefined : 'Cloudflare, Inc. (IANA #1910)',
     registryHandle: isAvailable ? undefined : 'DOM-8849201-VRSN',
+    dnssec: isAvailable ? undefined : 'Signed (DNSSEC Active)',
     statusFlags: isAvailable ? [] : ['clientTransferProhibited', 'clientUpdateProhibited'],
     nameservers: isAvailable ? [] : ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
     dns: isAvailable
@@ -332,51 +408,82 @@ function synthesizeDomainInquiry(raw: string): DomainInquiry {
       : {
           a: ['104.21.44.19', '172.67.188.91'],
           aaaa: ['2606:4700:3031::ac43:bc5b'],
+          cname: `www.${full}`,
+          ptr: ['edge-node.cloudflare.com'],
           mx: ['10 mx1.forwardemail.net', '20 mx2.forwardemail.net'],
           ns: ['ada.ns.cloudflare.com', 'bob.ns.cloudflare.com'],
           txt: ['v=spf1 include:_spf.google.com ~all', 'google-site-verification=Tk92YV8xOTk'],
+          dmarc: ['v=DMARC1; p=quarantine; rua=mailto:dmarc@' + full],
+          spf: 'v=spf1 include:_spf.google.com ~all',
         },
-    valuation: evaluateLocal(full),
+    valuation: evaluateLocal(full, isAvailable),
     checkedAt: new Date().toISOString(),
     checkLatencyMs: 64,
   };
 }
 
 function synthesizeHistoryReport(raw: string): HistoryReport {
-  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'supercoloring.com';
   const isVirgin = clean.includes('veltrix') || clean.includes('nexora');
   if (isVirgin) {
     return {
       domain: clean,
+      currentlyRegistered: false,
       previouslyRegistered: false,
-      historyVerdict: 'Clean Virgin Domain (No Past Registration Traces)',
-      summaryNote:
-        'Zero historical snapshots in Internet Archive Wayback Machine and zero past SSL certificates in Certificate Transparency logs.',
+      historyVerdict: 'Clean Virgin Domain (Never Registered in Past)',
+      summaryNote: `${clean} is completely unclaimed with zero prior registration records in RDAP, zero Wayback Machine snapshots, and zero historical SSL certificates.`,
+      liveSiteUrl: `https://${clean}`,
+      waybackCalendarUrl: `https://web.archive.org/web/*/${clean}`,
       totalSpanYears: 0,
       waybackSnapshots: 0,
       certCount: 0,
       checkLatencyMs: 112,
     };
   }
+  const years = ['2008', '2010', '2012', '2014', '2016', '2018', '2020', '2022', '2024', '2026'];
   return {
     domain: clean,
+    currentlyRegistered: true,
     previouslyRegistered: true,
-    historyVerdict: 'Previously Registered / Historical Footprint Found',
-    summaryNote: `Historical footprint confirmed between 2018 and 2026 (94 Wayback captures, 18 TLS certificates, 4 past subdomains).`,
-    firstSeenAt: '2018-11-24',
-    lastSeenAt: '2026-08-14',
-    firstSeenYear: 2018,
+    historyVerdict: 'Active & Historically Established Since 2008 (19 Years)',
+    summaryNote: `${clean} is actively registered (created 2008-08-15) with 19 years of web history (2008–2026) and archived snapshots on Wayback Machine.`,
+    liveSiteUrl: `https://${clean}`,
+    waybackCalendarUrl: `https://web.archive.org/web/*/${clean}`,
+    rdapCreatedDate: '2008-08-15',
+    firstSeenAt: '2008-08-15',
+    lastSeenAt: '2026-09-25',
+    firstSeenYear: 2008,
     lastSeenYear: 2026,
-    totalSpanYears: 9,
-    waybackSnapshots: 94,
-    activeYears: ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'],
-    certCount: 18,
+    totalSpanYears: 19,
+    waybackSnapshots: 228,
+    activeYears: years,
+    snapshots: years
+      .slice()
+      .reverse()
+      .map((yr) => ({
+        year: yr,
+        date: `${yr}-06-15`,
+        timestamp: `${yr}0615000000`,
+        archiveUrl: `https://web.archive.org/web/${yr}0615000000/https://${clean}`,
+        statusCode: '200',
+      })),
+    certCount: 24,
     pastIssuers: ["Let's Encrypt", 'Cloudflare Inc', 'Google Trust Services'],
-    pastSubdomains: [`api.${clean}`, `docs.${clean}`, `staging.${clean}`, `blog.${clean}`],
+    pastSubdomains: [`www.${clean}`, `cdn.${clean}`, `static.${clean}`],
     milestones: [
-      { date: '2018-11-24', source: 'Wayback Archive', event: 'First archived web snapshot captured on 2018-11-24' },
-      { date: '2019-02-03', source: 'CT Log (crt.sh)', event: 'First TLS/SSL certificate issued (18 total historical certs)' },
-      { date: '2026-08-14', source: 'Wayback Archive', event: 'Most recent web crawl capture (94 total snapshots across 9 active years)' },
+      { date: '2008-08-15', source: 'RDAP Registry', event: 'Domain registered in authoritative registry' },
+      {
+        date: '2008-10-12',
+        source: 'Wayback Archive',
+        event: 'Earliest archived web capture on 2008-10-12',
+        archiveUrl: `https://web.archive.org/web/20081012000000/https://${clean}`,
+      },
+      {
+        date: '2026-09-01',
+        source: 'Wayback Archive',
+        event: 'Latest Wayback snapshot captured (19 active archive years)',
+        archiveUrl: `https://web.archive.org/web/20260901000000/https://${clean}`,
+      },
     ],
     checkLatencyMs: 184,
   };
@@ -386,7 +493,10 @@ function synthesizeReconReport(raw: string): ReconReport {
   const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   return {
     domain: clean,
+    liveSiteUrl: `https://${clean}`,
+    waybackCalendarUrl: `https://web.archive.org/web/*/${clean}`,
     targetIp: '104.21.44.19',
+    reversePtr: 'edge-proxy.cloudflare.com',
     openPortsCount: 3,
     portsScanned: 14,
     ports: [
@@ -410,10 +520,19 @@ function synthesizeReconReport(raw: string): ReconReport {
       sans: [clean, `*.${clean}`],
     },
     subdomains: [
-      { subdomain: `www.${clean}`, ips: ['104.21.44.19'] },
-      { subdomain: `docs.${clean}`, ips: ['104.21.44.19'] },
-      { subdomain: `api.${clean}`, ips: ['172.67.188.91'] },
+      { subdomain: `www.${clean}`, ips: ['104.21.44.19'], cname: `${clean}.cdn.cloudflare.net`, takeoverRisk: 'Safe (Active IP Resolution)' },
+      { subdomain: `docs.${clean}`, ips: ['104.21.44.19'], takeoverRisk: 'Safe (Active IP Resolution)' },
+      { subdomain: `api.${clean}`, ips: ['172.67.188.91'], takeoverRisk: 'Safe (Active IP Resolution)' },
     ],
+    httpHeaders: {
+      Server: 'cloudflare',
+      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+    },
+    hasRobotsTxt: true,
+    hasSecurityTxt: true,
+    hasSitemapXml: true,
     securityGrade: 'A',
     securityScore: 85,
     securityChecks: [

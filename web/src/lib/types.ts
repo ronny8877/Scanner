@@ -1,6 +1,8 @@
 export interface Valuation {
   score: number;
-  tier: 'Ultra Premium' | 'High Value' | 'Brandable' | 'Standard' | string;
+  tier: string;
+  regFeeUsd?: number;
+  regFeeDisplay?: string;
   estimatedMinUsd: number;
   estimatedMaxUsd: number;
   estimatedDisplay: string;
@@ -8,7 +10,15 @@ export interface Valuation {
   tldScore: number;
   phoneticScore: number;
   keywordScore: number;
+  isDictionaryWord?: boolean;
   highlights: string[];
+}
+
+export interface DictionaryPack {
+  id: string;
+  name: string;
+  description: string;
+  words: string[];
 }
 
 export interface ScanResultItem {
@@ -26,6 +36,7 @@ export interface ScanResultItem {
 
 export interface ScanReport {
   seedKeywords: string[];
+  dictionaryUsed?: string;
   totalChecked: number;
   availableCount: number;
   takenCount: number;
@@ -37,23 +48,30 @@ export interface ScanReport {
 export interface DNSRecords {
   a?: string[];
   aaaa?: string[];
+  cname?: string;
+  ptr?: string[];
   mx?: string[];
   ns?: string[];
   txt?: string[];
-  cname?: string;
+  dmarc?: string[];
+  spf?: string;
 }
 
 export interface DomainInquiry {
   domain: string;
   available: boolean;
   statusSummary: string;
+  liveSiteUrl?: string;
+  waybackCalendarUrl?: string;
   registeredAt?: string;
   updatedAt?: string;
   expiresAt?: string;
   domainAge?: string;
   daysToExpiry?: number;
   registrar?: string;
+  registrarIana?: string;
   registryHandle?: string;
+  dnssec?: string;
   statusFlags?: string[];
   nameservers?: string[];
   dns: DNSRecords;
@@ -62,17 +80,31 @@ export interface DomainInquiry {
   checkLatencyMs: number;
 }
 
+export interface WaybackSnapshot {
+  year: string;
+  date: string;
+  timestamp: string;
+  archiveUrl: string;
+  statusCode: string;
+}
+
 export interface HistoryTimeline {
   date: string;
   source: string;
   event: string;
+  archiveUrl?: string;
 }
 
 export interface HistoryReport {
   domain: string;
+  currentlyRegistered?: boolean;
   previouslyRegistered: boolean;
   historyVerdict: string;
   summaryNote: string;
+  liveSiteUrl?: string;
+  waybackCalendarUrl?: string;
+  rdapCreatedDate?: string;
+  rdapRegistrar?: string;
   firstSeenAt?: string;
   lastSeenAt?: string;
   firstSeenYear?: number;
@@ -80,6 +112,7 @@ export interface HistoryReport {
   totalSpanYears: number;
   waybackSnapshots: number;
   activeYears?: string[];
+  snapshots?: WaybackSnapshot[];
   certCount: number;
   pastIssuers?: string[];
   pastSubdomains?: string[];
@@ -112,6 +145,8 @@ export interface TLSInfo {
 export interface SubdomainHit {
   subdomain: string;
   ips: string[];
+  cname?: string;
+  takeoverRisk?: string;
 }
 
 export interface SecurityCheck {
@@ -122,12 +157,19 @@ export interface SecurityCheck {
 
 export interface ReconReport {
   domain: string;
+  liveSiteUrl?: string;
+  waybackCalendarUrl?: string;
   targetIp: string;
+  reversePtr?: string;
   openPortsCount: number;
   portsScanned: number;
   ports: PortProbe[];
   tls: TLSInfo;
   subdomains: SubdomainHit[];
+  httpHeaders?: Record<string, string>;
+  hasRobotsTxt?: boolean;
+  hasSecurityTxt?: boolean;
+  hasSitemapXml?: boolean;
   securityGrade: string;
   securityScore: number;
   securityChecks: SecurityCheck[];
@@ -190,7 +232,7 @@ export interface Job {
   type: 'scan' | 'inspect' | 'history' | 'recon' | 'crawl' | 'parallel_suite' | 'watchlist_recheck' | string;
   title: string;
   target: string;
-  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELED' | 'FAILED';
   progress: number;
   phase: string;
   workers: number;

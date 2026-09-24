@@ -11,13 +11,14 @@ import (
 
 // ScanOptions configures a bulk domain availability & value discovery scan.
 type ScanOptions struct {
-	Keywords      []string `json:"keywords"`
-	TLDs          []string `json:"tlds"`
-	Mutations     bool     `json:"mutations"`     // Generate brandable prefix/suffix combinations
-	OnlyAvailable bool     `json:"onlyAvailable"` // Filter results to only available (empty) domains
-	MinScore      int      `json:"minScore"`      // Minimum valuation score (0-100)
-	Concurrency   int      `json:"concurrency"`   // Worker pool size
-	MaxResults    int      `json:"maxResults"`
+	Keywords       []string `json:"keywords"`
+	TLDs           []string `json:"tlds"`
+	DictionaryPack string   `json:"dictionaryPack,omitempty"` // Optional built-in dictionary pack ID
+	Mutations      bool     `json:"mutations"`                // Generate brandable prefix/suffix combinations
+	OnlyAvailable  bool     `json:"onlyAvailable"`            // Filter results to only available (empty) domains
+	MinScore       int      `json:"minScore"`                 // Minimum valuation score (0-100)
+	Concurrency    int      `json:"concurrency"`              // Worker pool size
+	MaxResults     int      `json:"maxResults"`
 }
 
 // ScanResultItem represents one scanned domain candidate with availability and valuation.
@@ -37,10 +38,11 @@ type ScanResultItem struct {
 // ScanReport aggregates the full scan run statistics and sorted items.
 type ScanReport struct {
 	SeedKeywords   []string         `json:"seedKeywords"`
+	DictionaryUsed string           `json:"dictionaryUsed,omitempty"`
 	TotalChecked   int              `json:"totalChecked"`
 	AvailableCount int              `json:"availableCount"`
 	TakenCount     int              `json:"takenCount"`
-	HighValueCount int              `json:"highValueCount"` // Available domains with score >= 74
+	HighValueCount int              `json:"highValueCount"` // Available domains with score >= 73
 	DurationMs     int64            `json:"durationMs"`
 	Items          []ScanResultItem `json:"items"`
 }
@@ -48,9 +50,9 @@ type ScanReport struct {
 var defaultTLDs = []string{"com", "ai", "io", "dev", "co", "app"}
 
 var brandPrefixes = []string{"get", "try", "use", "go", "open"}
-var brandSuffixes = []string{"hq", "labs", "flow", "pulse", "hub", "core", "grid", "cloud", "sync", "base"}
+var brandSuffixes = []string{"hq", "labs", "flow", "pulse", "hub", "core", "grid", "cloud", "sync", "base", "studio", "ai"}
 
-// ScanDomains generates domain candidates from keywords and checks their availability & value concurrently.
+// ScanDomains generates domain candidates from keywords/dictionary and checks their availability & value concurrently.
 func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 	start := time.Now()
 
@@ -58,13 +60,13 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 		opts.TLDs = defaultTLDs
 	}
 	if opts.Concurrency <= 0 {
-		opts.Concurrency = 12
+		opts.Concurrency = 18
 	}
 	if opts.MaxResults <= 0 {
-		opts.MaxResults = 60
+		opts.MaxResults = 64
 	}
 
-	candidates := generateCandidates(opts.Keywords, opts.TLDs, opts.Mutations, opts.MaxResults)
+	candidates := generateCandidates(opts.Keywords, opts.TLDs, opts.DictionaryPack, opts.Mutations, opts.MaxResults)
 
 	type job struct {
 		domain string
@@ -84,7 +86,12 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 		go func() {
 			defer wg.Done()
 			for j := range jobCh {
-				resCh <- checkSingleDomainFast(ctx, j.domain)
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					resCh <- checkSingleDomainFast(ctx, j.domain)
+				}
 			}
 		}()
 	}
@@ -104,7 +111,7 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 	for item := range resCh {
 		if item.Available {
 			availableCount++
-			if item.Valuation.Score >= 74 {
+			if item.Valuation.Score >= 73 {
 				highValueCount++
 			}
 		} else {
@@ -133,6 +140,7 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 
 	return ScanReport{
 		SeedKeywords:   opts.Keywords,
+		DictionaryUsed: opts.DictionaryPack,
 		TotalChecked:   len(candidates),
 		AvailableCount: availableCount,
 		TakenCount:     takenCount,
@@ -142,7 +150,7 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 	}
 }
 
-func generateCandidates(keywords []string, tlds []string, mutations bool, limit int) []string {
+func generateCandidates(keywords []string, tlds []string, dictPack string, mutations bool, limit int) []string {
 	seen := make(map[string]bool)
 	var list []string
 
@@ -159,12 +167,14 @@ func generateCandidates(keywords []string, tlds []string, mutations bool, limit 
 		}
 	}
 
+	dictWords := GetDictionaryWords(dictPack)
+
+	// 1. Exact user keywords across all requested TLDs
 	for _, rawKw := range keywords {
 		rawKw = strings.ToLower(strings.TrimSpace(rawKw))
 		if rawKw == "" {
 			continue
 		}
-		// If user passed an explicit domain with a TLD (e.g. "scanner.io")
 		if strings.Contains(rawKw, ".") {
 			parts := strings.SplitN(rawKw, ".", 2)
 			addCandidate(parts[0], parts[1])
@@ -175,16 +185,46 @@ func generateCandidates(keywords []string, tlds []string, mutations bool, limit 
 			continue
 		}
 
-		// Exact keyword across all requested TLDs
 		for _, t := range tlds {
 			addCandidate(rawKw, t)
 		}
 
-		// Brandable combinations (suffixes & prefixes) to discover valuable empty domains
-		if mutations {
-			primaryTLDs := tlds
-			if len(primaryTLDs) > 3 {
-				primaryTLDs = primaryTLDs[:3] // Focus variations on top TLDs (.com, .ai, .io)
+		// If dictionary pack is active, combine user seed + dictionary word (e.g. "nova" + "loom" -> "novaloom.com")
+		if len(dictWords) > 0 {
+			topTLDs := tlds
+			if len(topTLDs) > 3 {
+				topTLDs = topTLDs[:3]
+			}
+			for i, dw := range dictWords {
+				if i >= 12 {
+					break
+				}
+				for _, t := range topTLDs {
+					addCandidate(rawKw+dw, t)
+				}
+			}
+		}
+	}
+
+	// 2. Dictionary words themselves across requested TLDs
+	if len(dictWords) > 0 {
+		for _, dw := range dictWords {
+			for _, t := range tlds {
+				addCandidate(dw, t)
+			}
+		}
+	}
+
+	// 3. Brandable combinations (suffixes & prefixes)
+	if mutations {
+		primaryTLDs := tlds
+		if len(primaryTLDs) > 4 {
+			primaryTLDs = primaryTLDs[:4]
+		}
+		for _, rawKw := range keywords {
+			rawKw = sanitizeLabel(rawKw)
+			if rawKw == "" {
+				continue
 			}
 			for _, sfx := range brandSuffixes {
 				for _, t := range primaryTLDs {
@@ -211,8 +251,6 @@ func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultIte
 		tld = parts[1]
 	}
 
-	val := EvaluateDomain(fullDomain)
-
 	dnsCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
 	defer cancel()
 
@@ -236,6 +274,8 @@ func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultIte
 	if registered {
 		status = "Registered"
 	}
+
+	val := EvaluateDomainWithStatus(fullDomain, !registered)
 
 	return ScanResultItem{
 		Domain:      fullDomain,

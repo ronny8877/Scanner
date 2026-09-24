@@ -20,23 +20,25 @@ const (
 	StatusQueued    JobStatus = "QUEUED"
 	StatusRunning   JobStatus = "RUNNING"
 	StatusCompleted JobStatus = "COMPLETED"
+	StatusCanceled  JobStatus = "CANCELED"
 	StatusFailed    JobStatus = "FAILED"
 )
 
 // Job represents a single tracked enterprise job in the queue.
 type Job struct {
-	ID            string      `json:"id"`
-	Type          string      `json:"type"` // "scan" | "inspect" | "history" | "recon" | "crawl" | "parallel_suite"
-	Title         string      `json:"title"`
-	Target        string      `json:"target"`
-	Status        JobStatus   `json:"status"`
-	Progress      int         `json:"progress"`      // 0 - 100
-	Phase         string      `json:"phase"`         // Current execution step description
-	Workers       int         `json:"workers"`       // Concurrent workers assigned
-	ResultSummary string      `json:"resultSummary"` // Concise outcome pill text
-	CreatedAt     string      `json:"createdAt"`
-	DurationMs    int64       `json:"durationMs"`
-	Result        interface{} `json:"result,omitempty"`
+	ID            string             `json:"id"`
+	Type          string             `json:"type"`
+	Title         string             `json:"title"`
+	Target        string             `json:"target"`
+	Status        JobStatus          `json:"status"`
+	Progress      int                `json:"progress"`
+	Phase         string             `json:"phase"`
+	Workers       int                `json:"workers"`
+	ResultSummary string             `json:"resultSummary"`
+	CreatedAt     string             `json:"createdAt"`
+	DurationMs    int64              `json:"durationMs"`
+	Result        interface{}        `json:"result,omitempty"`
+	cancelFunc    context.CancelFunc `json:"-"`
 }
 
 // ParallelSuiteResult holds the combined output of running all 4 engines concurrently on a target.
@@ -48,7 +50,7 @@ type ParallelSuiteResult struct {
 	Crawl   crawler.CrawlReport  `json:"crawl"`
 }
 
-// Manager coordinates concurrent job execution and telemetry.
+// Manager coordinates concurrent job execution, cancellation, and telemetry.
 type Manager struct {
 	mu      sync.RWMutex
 	counter uint64
@@ -62,45 +64,98 @@ func NewManager() *Manager {
 	}
 }
 
-// CreateJob registers a new job in QUEUED state and transitions it to RUNNING.
-func (m *Manager) CreateJob(jobType, title, target string, workers int) *Job {
+// CreateJobWithCancel registers a new running job with an attached context.CancelFunc so it can be aborted mid-flight.
+func (m *Manager) CreateJobWithCancel(parentCtx context.Context, jobType, title, target string, workers int) (*Job, context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parentCtx)
 	seq := atomic.AddUint64(&m.counter, 1)
 	id := fmt.Sprintf("job-%04d", seq)
 	j := &Job{
-		ID:        id,
-		Type:      jobType,
-		Title:     title,
-		Target:    target,
-		Status:    StatusRunning,
-		Progress:  12,
-		Phase:     "Dispatching concurrent worker pool…",
-		Workers:   workers,
-		CreatedAt: time.Now().Format(time.RFC3339),
+		ID:         id,
+		Type:       jobType,
+		Title:      title,
+		Target:     target,
+		Status:     StatusRunning,
+		Progress:   15,
+		Phase:      "Dispatching concurrent worker pool…",
+		Workers:    workers,
+		CreatedAt:  time.Now().Format(time.RFC3339),
+		cancelFunc: cancel,
 	}
 
 	m.mu.Lock()
 	m.jobs[id] = j
 	m.mu.Unlock()
+	return j, ctx, cancel
+}
+
+// CreateJob registers a new job in RUNNING state.
+func (m *Manager) CreateJob(jobType, title, target string, workers int) *Job {
+	j, _, _ := m.CreateJobWithCancel(context.Background(), jobType, title, target, workers)
 	return j
+}
+
+// CancelJob aborts a running job by invoking its context.CancelFunc and marking it CANCELED.
+func (m *Manager) CancelJob(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	j, ok := m.jobs[id]
+	if !ok {
+		return false
+	}
+	if j.Status == StatusRunning || j.Status == StatusQueued {
+		if j.cancelFunc != nil {
+			j.cancelFunc()
+		}
+		j.Status = StatusCanceled
+		j.Phase = "Canceled by user"
+		j.ResultSummary = "Aborted mid-flight by user"
+		return true
+	}
+	return false
+}
+
+// CancelAllRunning aborts all currently running jobs.
+func (m *Manager) CancelAllRunning() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	count := 0
+	for _, j := range m.jobs {
+		if j.Status == StatusRunning || j.Status == StatusQueued {
+			if j.cancelFunc != nil {
+				j.cancelFunc()
+			}
+			j.Status = StatusCanceled
+			j.Phase = "Canceled by user"
+			j.ResultSummary = "Aborted mid-flight by user"
+			count++
+		}
+	}
+	return count
 }
 
 // UpdateProgress updates the live progress percentage and phase description of a running job.
 func (m *Manager) UpdateProgress(id string, progress int, phase string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if j, ok := m.jobs[id]; ok {
+	if j, ok := m.jobs[id]; ok && j.Status == StatusRunning {
 		j.Progress = progress
 		j.Phase = phase
 	}
 }
 
-// CompleteJob marks a job as COMPLETED with its summary and result payload.
+// CompleteJob marks a job as COMPLETED (unless it was already CANCELED).
 func (m *Manager) CompleteJob(id, summary string, durationMs int64, result interface{}) *Job {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j, ok := m.jobs[id]
 	if !ok {
 		return nil
+	}
+	if j.Status == StatusCanceled {
+		j.DurationMs = durationMs
+		return j
 	}
 	j.Status = StatusCompleted
 	j.Progress = 100
@@ -119,14 +174,13 @@ func (m *Manager) List() []*Job {
 	var out []*Job
 	for _, j := range m.jobs {
 		copyJob := *j
-		// Keep list lightweight while preserving metadata
 		out = append(out, &copyJob)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ID > out[j].ID
 	})
-	if len(out) > 35 {
-		out = out[:35]
+	if len(out) > 40 {
+		out = out[:40]
 	}
 	return out
 }
@@ -145,18 +199,19 @@ func (m *Manager) Get(id string) (*Job, bool) {
 
 // RunParallelSuite executes RDAP Inquiry, Past History (Wayback+CT), Port/TLS Recon, and Site Cartography
 // all in parallel on a target domain while updating job telemetry.
-func (m *Manager) RunParallelSuite(ctx context.Context, rawTarget string) (*Job, ParallelSuiteResult) {
+func (m *Manager) RunParallelSuite(parentCtx context.Context, rawTarget string) (*Job, ParallelSuiteResult) {
 	start := time.Now()
 	clean := domain.CleanDomainName(rawTarget)
-	job := m.CreateJob("parallel_suite", "Full Parallel Surface & History Suite", clean, 32)
+	job, ctx, cancel := m.CreateJobWithCancel(parentCtx, "parallel_suite", "Full Parallel Surface & History Suite", clean, 32)
+	defer cancel()
 
 	var (
-		wg          sync.WaitGroup
-		doneCount   int32
-		inquiryRes  domain.DomainInquiry
-		historyRes  domain.HistoryReport
-		reconRes    recon.ReconReport
-		crawlRes    crawler.CrawlReport
+		wg         sync.WaitGroup
+		doneCount  int32
+		inquiryRes domain.DomainInquiry
+		historyRes domain.HistoryReport
+		reconRes   recon.ReconReport
+		crawlRes   crawler.CrawlReport
 	)
 
 	advanceStep := func(stepLabel string) {

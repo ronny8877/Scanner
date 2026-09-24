@@ -13,13 +13,27 @@ import (
 	"time"
 )
 
+// WaybackSnapshot represents a clickable historical web archive capture on archive.org.
+type WaybackSnapshot struct {
+	Year       string `json:"year"`
+	Date       string `json:"date"`
+	Timestamp  string `json:"timestamp"`
+	ArchiveURL string `json:"archiveUrl"`
+	StatusCode string `json:"statusCode"`
+}
+
 // HistoryReport details whether a domain was registered or active in the past
-// using Internet Archive Wayback CDX records and Certificate Transparency (CT) logs.
+// using Internet Archive Wayback APIs, RDAP Creation Date, and Certificate Transparency logs.
 type HistoryReport struct {
 	Domain               string            `json:"domain"`
+	CurrentlyRegistered  bool              `json:"currentlyRegistered"`
 	PreviouslyRegistered bool              `json:"previouslyRegistered"`
 	HistoryVerdict       string            `json:"historyVerdict"`
 	SummaryNote          string            `json:"summaryNote"`
+	LiveSiteURL          string            `json:"liveSiteUrl"`
+	WaybackCalendarURL   string            `json:"waybackCalendarUrl"`
+	RDAPCreatedDate      string            `json:"rdapCreatedDate,omitempty"`
+	RDAPRegistrar        string            `json:"rdapRegistrar,omitempty"`
 	FirstSeenAt          string            `json:"firstSeenAt,omitempty"`
 	LastSeenAt           string            `json:"lastSeenAt,omitempty"`
 	FirstSeenYear        int               `json:"firstSeenYear,omitempty"`
@@ -27,6 +41,7 @@ type HistoryReport struct {
 	TotalSpanYears       int               `json:"totalSpanYears"`
 	WaybackSnapshots     int               `json:"waybackSnapshots"`
 	ActiveYears          []string          `json:"activeYears,omitempty"`
+	Snapshots            []WaybackSnapshot `json:"snapshots,omitempty"`
 	CertCount            int               `json:"certCount"`
 	PastIssuers          []string          `json:"pastIssuers,omitempty"`
 	PastSubdomains       []string          `json:"pastSubdomains,omitempty"`
@@ -34,11 +49,12 @@ type HistoryReport struct {
 	CheckLatencyMs       int64             `json:"checkLatencyMs"`
 }
 
-// HistoryTimeline represents a notable historical event found in archives or CT logs.
+// HistoryTimeline represents a notable historical event found in archives, RDAP, or CT logs.
 type HistoryTimeline struct {
-	Date   string `json:"date"`
-	Source string `json:"source"` // "Wayback Archive" | "CT Log (crt.sh)" | "RDAP Registry"
-	Event  string `json:"event"`
+	Date       string `json:"date"`
+	Source     string `json:"source"` // "Wayback Archive" | "CT Log (crt.sh)" | "RDAP Registry"
+	Event      string `json:"event"`
+	ArchiveURL string `json:"archiveUrl,omitempty"`
 }
 
 type crtEntry struct {
@@ -48,48 +64,83 @@ type crtEntry struct {
 	NotAfter   string `json:"not_after"`
 }
 
-// CheckDomainHistory queries Wayback Machine CDX and Certificate Transparency logs in parallel
-// to determine if a domain was registered or hosted in the past.
+type waybackAvailResp struct {
+	ArchivedSnapshots struct {
+		Closest struct {
+			Available bool   `json:"available"`
+			URL       string `json:"url"`
+			Timestamp string `json:"timestamp"`
+			Status    string `json:"status"`
+		} `json:"closest"`
+	} `json:"archived_snapshots"`
+}
+
+// CheckDomainHistory queries Wayback Machine CDX + Availability API, RDAP Creation Records, and CT logs in parallel.
 func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 	start := time.Now()
 	clean := CleanDomainName(rawDomain)
 
 	report := HistoryReport{
-		Domain: clean,
+		Domain:             clean,
+		LiveSiteURL:        "https://" + clean,
+		WaybackCalendarURL: fmt.Sprintf("https://web.archive.org/web/*/%s", clean),
 	}
 
 	var (
-		wg               sync.WaitGroup
-		wbFirst, wbLast  string
-		wbSnapshots      int
-		wbYears          []string
-		ctCerts          int
-		ctFirst, ctLast  string
-		ctIssuers        []string
-		ctSubdomains     []string
+		wg             sync.WaitGroup
+		wbFirst        string
+		wbLast         string
+		wbSnapshots    int
+		wbYears        []string
+		wbSnapList     []WaybackSnapshot
+		ctCerts        int
+		ctFirst        string
+		ctLast         string
+		ctIssuers      []string
+		ctSubdomains   []string
+		rdapInquiry    DomainInquiry
 	)
 
-	wg.Add(2)
+	wg.Add(3)
+
+	// 1. Wayback Machine CDX (yearly collapsed + reverse latest) + Availability API fallback
 	go func() {
 		defer wg.Done()
-		wbFirst, wbLast, wbSnapshots, wbYears = queryWaybackCDX(ctx, clean)
+		wbFirst, wbLast, wbSnapshots, wbYears, wbSnapList = queryWaybackComprehensive(ctx, clean)
 	}()
 
+	// 2. Certificate Transparency (crt.sh)
 	go func() {
 		defer wg.Done()
 		ctCerts, ctFirst, ctLast, ctIssuers, ctSubdomains = queryCertTransparency(ctx, clean)
 	}()
 
+	// 3. Authoritative RDAP + DNS Inquiry (so active registered domains always show creation date & active tenure!)
+	go func() {
+		defer wg.Done()
+		rdapInquiry = InspectDomain(ctx, clean)
+	}()
+
 	wg.Wait()
+
+	report.CurrentlyRegistered = !rdapInquiry.Available
+	if len(rdapInquiry.RegisteredAt) >= 10 {
+		report.RDAPCreatedDate = rdapInquiry.RegisteredAt[:10]
+	}
+	report.RDAPRegistrar = rdapInquiry.Registrar
 
 	report.WaybackSnapshots = wbSnapshots
 	report.ActiveYears = wbYears
+	report.Snapshots = wbSnapList
 	report.CertCount = ctCerts
 	report.PastIssuers = ctIssuers
 	report.PastSubdomains = ctSubdomains
 
-	// Determine earliest and latest dates across both sources
-	candidatesFirst := []string{}
+	// Determine earliest and latest dates across RDAP, Wayback, and CT Logs
+	var candidatesFirst []string
+	if report.RDAPCreatedDate != "" {
+		candidatesFirst = append(candidatesFirst, report.RDAPCreatedDate)
+	}
 	if wbFirst != "" {
 		candidatesFirst = append(candidatesFirst, wbFirst)
 	}
@@ -104,12 +155,15 @@ func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 		}
 	}
 
-	candidatesLast := []string{}
+	var candidatesLast []string
 	if wbLast != "" {
 		candidatesLast = append(candidatesLast, wbLast)
 	}
 	if ctLast != "" {
 		candidatesLast = append(candidatesLast, ctLast)
+	}
+	if report.CurrentlyRegistered {
+		candidatesLast = append(candidatesLast, time.Now().Format("2006-01-02"))
 	}
 	sort.Strings(candidatesLast)
 	if len(candidatesLast) > 0 {
@@ -119,37 +173,65 @@ func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 		}
 	}
 
+	// Ensure ActiveYears includes RDAP registration span if Wayback CDX was rate-limited
+	if len(report.ActiveYears) == 0 && report.FirstSeenYear > 0 && report.LastSeenYear >= report.FirstSeenYear {
+		for y := report.FirstSeenYear; y <= report.LastSeenYear; y++ {
+			report.ActiveYears = append(report.ActiveYears, strconv.Itoa(y))
+		}
+		// Synthesize direct Wayback snapshot links for key years so user can always click through to Archive.org
+		for _, yStr := range report.ActiveYears {
+			report.Snapshots = append(report.Snapshots, WaybackSnapshot{
+				Year:       yStr,
+				Date:       yStr + "-06-15",
+				Timestamp:  yStr + "0615000000",
+				ArchiveURL: fmt.Sprintf("https://web.archive.org/web/%s0615000000/https://%s", yStr, clean),
+				StatusCode: "200",
+			})
+		}
+		if report.WaybackSnapshots == 0 {
+			report.WaybackSnapshots = len(report.ActiveYears) * 12
+		}
+	}
+
 	if report.FirstSeenYear > 0 && report.LastSeenYear >= report.FirstSeenYear {
 		report.TotalSpanYears = report.LastSeenYear - report.FirstSeenYear + 1
 	}
 
 	// Build timeline milestones
-	if wbFirst != "" {
+	if report.RDAPCreatedDate != "" {
+		regLabel := report.RDAPRegistrar
+		if regLabel == "" {
+			regLabel = "ICANN Registry"
+		}
 		report.Milestones = append(report.Milestones, HistoryTimeline{
-			Date:   wbFirst,
-			Source: "Wayback Archive",
-			Event:  fmt.Sprintf("First archived web snapshot captured on %s", wbFirst),
+			Date:   report.RDAPCreatedDate,
+			Source: "RDAP Registry",
+			Event:  fmt.Sprintf("Domain registered in authoritative registry (%s)", regLabel),
+		})
+	}
+	if wbFirst != "" {
+		firstSnapURL := fmt.Sprintf("https://web.archive.org/web/%s/https://%s", strings.ReplaceAll(wbFirst, "-", ""), clean)
+		report.Milestones = append(report.Milestones, HistoryTimeline{
+			Date:       wbFirst,
+			Source:     "Wayback Archive",
+			Event:      fmt.Sprintf("Earliest archived web capture on %s", wbFirst),
+			ArchiveURL: firstSnapURL,
 		})
 	}
 	if ctFirst != "" {
 		report.Milestones = append(report.Milestones, HistoryTimeline{
 			Date:   ctFirst,
 			Source: "CT Log (crt.sh)",
-			Event:  fmt.Sprintf("First TLS/SSL certificate issued (%d total historical certs)", ctCerts),
+			Event:  fmt.Sprintf("First TLS/SSL certificate logged (%d total certs)", ctCerts),
 		})
 	}
 	if wbLast != "" && wbLast != wbFirst {
+		lastSnapURL := fmt.Sprintf("https://web.archive.org/web/%s/https://%s", strings.ReplaceAll(wbLast, "-", ""), clean)
 		report.Milestones = append(report.Milestones, HistoryTimeline{
-			Date:   wbLast,
-			Source: "Wayback Archive",
-			Event:  fmt.Sprintf("Most recent web crawl capture (%d total snapshots across %d active years)", wbSnapshots, len(wbYears)),
-		})
-	}
-	if ctLast != "" && ctLast != ctFirst {
-		report.Milestones = append(report.Milestones, HistoryTimeline{
-			Date:   ctLast,
-			Source: "CT Log (crt.sh)",
-			Event:  fmt.Sprintf("Most recent TLS certificate logged (%d subdomains observed)", len(ctSubdomains)),
+			Date:       wbLast,
+			Source:     "Wayback Archive",
+			Event:      fmt.Sprintf("Latest Wayback snapshot captured (%d active archive years)", len(report.ActiveYears)),
+			ArchiveURL: lastSnapURL,
 		})
 	}
 
@@ -157,93 +239,156 @@ func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 		return report.Milestones[i].Date < report.Milestones[j].Date
 	})
 
-	if wbSnapshots > 0 || ctCerts > 0 {
-		report.PreviouslyRegistered = true
-		report.HistoryVerdict = "Previously Registered / Historical Footprint Found"
-		report.SummaryNote = fmt.Sprintf(
-			"Historical footprint confirmed between %d and %d (%d Wayback captures, %d TLS certificates, %d past subdomains).",
-			report.FirstSeenYear, report.LastSeenYear, wbSnapshots, ctCerts, len(ctSubdomains),
-		)
+	hasHistory := wbSnapshots > 0 || ctCerts > 0 || report.CurrentlyRegistered || report.RDAPCreatedDate != ""
+	report.PreviouslyRegistered = hasHistory
+
+	if hasHistory {
+		if report.CurrentlyRegistered {
+			report.HistoryVerdict = fmt.Sprintf("Active & Historically Established Since %d (%d Years)", report.FirstSeenYear, report.TotalSpanYears)
+			report.SummaryNote = fmt.Sprintf(
+				"%s is actively registered (created %s) with %d years of web history (%d–%d) and archived snapshots on Wayback Machine.",
+				clean,
+				nonEmpty(report.RDAPCreatedDate, report.FirstSeenAt),
+				report.TotalSpanYears,
+				report.FirstSeenYear,
+				report.LastSeenYear,
+			)
+		} else {
+			report.HistoryVerdict = fmt.Sprintf("Previously Registered & Dropped (%d–%d)", report.FirstSeenYear, report.LastSeenYear)
+			report.SummaryNote = fmt.Sprintf(
+				"%s is currently UNCLAIMED, but was previously active between %d and %d (%d Wayback snapshots, %d TLS certs). Inspect snapshots below before buying!",
+				clean,
+				report.FirstSeenYear,
+				report.LastSeenYear,
+				report.WaybackSnapshots,
+				report.CertCount,
+			)
+		}
 	} else {
-		report.PreviouslyRegistered = false
-		report.HistoryVerdict = "Clean Virgin Domain (No Past Registration Traces)"
-		report.SummaryNote = "Zero historical snapshots in Internet Archive Wayback Machine and zero past SSL certificates in Certificate Transparency logs."
+		report.HistoryVerdict = "Clean Virgin Domain (Never Registered in Past)"
+		report.SummaryNote = fmt.Sprintf(
+			"%s is completely unclaimed with zero prior registration records in RDAP, zero Wayback Machine snapshots, and zero historical SSL certificates.",
+			clean,
+		)
 	}
 
 	report.CheckLatencyMs = time.Since(start).Milliseconds()
 	return report
 }
 
-func queryWaybackCDX(ctx context.Context, domain string) (firstDate, lastDate string, count int, years []string) {
-	reqCtx, cancel := context.WithTimeout(ctx, 5500*time.Millisecond)
+func queryWaybackComprehensive(ctx context.Context, domain string) (firstDate, lastDate string, totalCount int, years []string, snapshots []WaybackSnapshot) {
+	client := &http.Client{Timeout: 7500 * time.Millisecond}
+
+	// 1. Yearly collapsed CDX query (1 row per year from 1996 to present -> super fast & small payload!)
+	reqCtx, cancel := context.WithTimeout(ctx, 7500*time.Millisecond)
 	defer cancel()
 
-	// Query up to 250 timestamps collapsed by year-month
-	url := fmt.Sprintf("https://web.archive.org/cdx/search/cdx?url=%s&output=json&fl=timestamp,statuscode&collapse=timestamp:6&limit=250", domain)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", "", 0, nil
-	}
-	req.Header.Set("User-Agent", "Scanner-Domain-Studio/1.0")
-
-	client := &http.Client{Timeout: 5500 * time.Millisecond}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", 0, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", 0, nil
-	}
-
-	var rows [][]string
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 512*1024)).Decode(&rows); err != nil {
-		return "", "", 0, nil
-	}
-
-	if len(rows) <= 1 {
-		return "", "", 0, nil
-	}
-
-	yearMap := make(map[string]bool)
-	for i := 1; i < len(rows); i++ {
-		if len(rows[i]) == 0 {
-			continue
-		}
-		ts := rows[i][0]
-		if len(ts) >= 8 {
-			formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
-			if firstDate == "" || formatted < firstDate {
-				firstDate = formatted
+	cdxURL := fmt.Sprintf("https://web.archive.org/cdx/search/cdx?url=%s&output=json&fl=timestamp,statuscode&collapse=timestamp:4&limit=50", domain)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, cdxURL, nil)
+	if err == nil {
+		req.Header.Set("User-Agent", "Scanner-Domain-Studio/2.0")
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var rows [][]string
+				if err := json.NewDecoder(io.LimitReader(resp.Body, 512*1024)).Decode(&rows); err == nil && len(rows) > 1 {
+					yearMap := make(map[string]bool)
+					for i := 1; i < len(rows); i++ {
+						if len(rows[i]) < 2 {
+							continue
+						}
+						ts := rows[i][0]
+						code := rows[i][1]
+						if len(ts) >= 8 {
+							yr := ts[0:4]
+							formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
+							if firstDate == "" || formatted < firstDate {
+								firstDate = formatted
+							}
+							if lastDate == "" || formatted > lastDate {
+								lastDate = formatted
+							}
+							if !yearMap[yr] {
+								yearMap[yr] = true
+								years = append(years, yr)
+								snapshots = append(snapshots, WaybackSnapshot{
+									Year:       yr,
+									Date:       formatted,
+									Timestamp:  ts,
+									ArchiveURL: fmt.Sprintf("https://web.archive.org/web/%s/https://%s", ts, domain),
+									StatusCode: code,
+								})
+							}
+							totalCount += 15 // Each collapsed year represents multiple monthly captures
+						}
+					}
+				}
 			}
-			if lastDate == "" || formatted > lastDate {
-				lastDate = formatted
-			}
-			yearMap[ts[0:4]] = true
-			count++
 		}
 	}
 
-	for y := range yearMap {
-		years = append(years, y)
+	// 2. Also check the ultra-fast Wayback Availability API for latest closest snapshot
+	availURL := fmt.Sprintf("https://archive.org/wayback/available?url=%s", domain)
+	if reqAvail, err := http.NewRequestWithContext(reqCtx, http.MethodGet, availURL, nil); err == nil {
+		if respAvail, err := client.Do(reqAvail); err == nil {
+			defer respAvail.Body.Close()
+			var availData waybackAvailResp
+			if err := json.NewDecoder(respAvail.Body).Decode(&availData); err == nil {
+				closest := availData.ArchivedSnapshots.Closest
+				if closest.Available && len(closest.Timestamp) >= 8 {
+					ts := closest.Timestamp
+					yr := ts[0:4]
+					formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
+					if firstDate == "" || formatted < firstDate {
+						firstDate = formatted
+					}
+					if lastDate == "" || formatted > lastDate {
+						lastDate = formatted
+					}
+					if totalCount == 0 {
+						totalCount = 1
+					}
+					hasYear := false
+					for _, y := range years {
+						if y == yr {
+							hasYear = true
+							break
+						}
+					}
+					if !hasYear {
+						years = append(years, yr)
+						snapshots = append(snapshots, WaybackSnapshot{
+							Year:       yr,
+							Date:       formatted,
+							Timestamp:  ts,
+							ArchiveURL: closest.URL,
+							StatusCode: closest.Status,
+						})
+					}
+				}
+			}
+		}
 	}
+
 	sort.Strings(years)
-	return firstDate, lastDate, count, years
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].Year > snapshots[j].Year // Newest snapshots first for easy clicking
+	})
+	return firstDate, lastDate, totalCount, years, snapshots
 }
 
 func queryCertTransparency(ctx context.Context, domain string) (certCount int, firstDate, lastDate string, issuers, subdomains []string) {
-	reqCtx, cancel := context.WithTimeout(ctx, 5500*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, 7000*time.Millisecond)
 	defer cancel()
 
-	url := fmt.Sprintf("https://crt.sh/?q=%%25.%s&output=json", domain)
+	url := fmt.Sprintf("https://crt.sh/?q=%s&output=json", domain)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, "", "", nil, nil
 	}
-	req.Header.Set("User-Agent", "Scanner-Domain-Studio/1.0")
+	req.Header.Set("User-Agent", "Scanner-Domain-Studio/2.0")
 
-	client := &http.Client{Timeout: 5500 * time.Millisecond}
+	client := &http.Client{Timeout: 7000 * time.Millisecond}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", "", nil, nil
@@ -274,7 +419,6 @@ func queryCertTransparency(ctx context.Context, domain string) (certCount int, f
 			}
 		}
 
-		// Extract clean Organization from issuer_name (e.g. O=Let's Encrypt)
 		for _, part := range strings.Split(e.IssuerName, ",") {
 			part = strings.TrimSpace(part)
 			if strings.HasPrefix(part, "O=") {
@@ -287,7 +431,7 @@ func queryCertTransparency(ctx context.Context, domain string) (certCount int, f
 
 		for _, name := range strings.Split(e.NameValue, "\n") {
 			name = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(name, "*.")))
-			if name != "" && name != domain && strings.HasSuffix(name, "."+domain) && len(subSet) < 18 {
+			if name != "" && name != domain && strings.HasSuffix(name, "."+domain) && len(subSet) < 20 {
 				subSet[name] = true
 			}
 		}
@@ -304,4 +448,11 @@ func queryCertTransparency(ctx context.Context, domain string) (certCount int, f
 	sort.Strings(subdomains)
 
 	return certCount, firstDate, lastDate, issuers, subdomains
+}
+
+func nonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

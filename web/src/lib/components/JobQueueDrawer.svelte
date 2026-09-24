@@ -8,10 +8,13 @@
     onClose: () => void;
     onSelectJob: (job: Job) => void;
     onDispatchParallelSuite: (target: string) => void;
+    onCancelJob?: (jobId?: string) => void;
   }
 
-  let { open, jobs, onClose, onSelectJob, onDispatchParallelSuite }: Props = $props();
-  let parallelTarget = $state('svelte.dev');
+  let { open, jobs, onClose, onSelectJob, onDispatchParallelSuite, onCancelJob }: Props = $props();
+  let parallelTarget = $state('supercoloring.com');
+
+  const runningCount = $derived(jobs.filter((j) => j.status === 'RUNNING').length);
 
   function submitSuite(e: Event) {
     e.preventDefault();
@@ -33,7 +36,7 @@
       class="w-full max-w-xl bg-[#f4f1e9] border-l-2 border-[#19231f] h-full flex flex-col shadow-2xl"
     >
       <!-- Drawer Header -->
-      <div class="bg-[#19231f] text-[#fffdf8] px-6 py-5 flex items-center justify-between">
+      <div class="bg-[#19231f] text-[#fffdf8] px-6 py-5 flex items-center justify-between gap-2">
         <div>
           <div class="flex items-center gap-2">
             <span class="w-2.5 h-2.5 rounded-full bg-[#dffc78]"></span>
@@ -46,13 +49,25 @@
           </p>
         </div>
 
-        <button
-          type="button"
-          onclick={onClose}
-          class="px-3.5 py-1.5 rounded-full text-xs font-mono bg-[#fffdf8]/15 hover:bg-[#dffc78] hover:text-[#19231f] text-[#fffdf8] transition-colors cursor-pointer"
-        >
-          Close
-        </button>
+        <div class="flex items-center gap-2">
+          {#if runningCount > 0 && onCancelJob}
+            <button
+              type="button"
+              onclick={() => onCancelJob?.()}
+              class="px-3 py-1.5 rounded-full text-xs font-display font-bold bg-[#ffc3a5] text-[#19231f] border border-[#fffdf8] hover:bg-[#ffad85] transition-colors cursor-pointer"
+            >
+              ✕ Cancel Running ({runningCount})
+            </button>
+          {/if}
+
+          <button
+            type="button"
+            onclick={onClose}
+            class="px-3.5 py-1.5 rounded-full text-xs font-mono bg-[#fffdf8]/15 hover:bg-[#dffc78] hover:text-[#19231f] text-[#fffdf8] transition-colors cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
       </div>
 
       <!-- Dispatch Multi-Pipeline Parallel Suite Form -->
@@ -66,7 +81,7 @@
           <input
             type="text"
             bind:value={parallelTarget}
-            placeholder="Target domain (e.g. svelte.dev)..."
+            placeholder="Target domain (e.g. supercoloring.com)..."
             class="flex-1 rounded-full bg-[#f4f1e9] border border-[#19231f]/25 px-4 py-2 text-xs font-mono text-[#19231f]"
           />
           <button type="submit" class="studio-btn-primary px-4 py-2 text-xs cursor-pointer shrink-0">
@@ -99,12 +114,30 @@
                 </div>
 
                 {#if job.status === 'RUNNING'}
-                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#dffc78] border border-[#19231f] text-[#19231f] animate-pulse">
-                    ● RUNNING ({job.progress}%)
-                  </span>
+                  <div class="flex items-center gap-1.5">
+                    <span class="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#dffc78] border border-[#19231f] text-[#19231f] animate-pulse">
+                      ● RUNNING ({job.progress}%)
+                    </span>
+                    {#if onCancelJob}
+                      <button
+                        type="button"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          onCancelJob?.(job.id);
+                        }}
+                        class="px-2.5 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] hover:bg-[#ffad85] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer"
+                      >
+                        ✕ Cancel
+                      </button>
+                    {/if}
+                  </div>
                 {:else if job.status === 'COMPLETED'}
                   <span class="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-[#d9d6fc] border border-[#19231f]/30 text-[#19231f]">
                     ✓ COMPLETED ({job.durationMs}ms)
+                  </span>
+                {:else if job.status === 'CANCELLED'}
+                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-[#ffc3a5] border border-[#19231f] text-[#19231f]">
+                    ✕ CANCELLED ({job.durationMs}ms)
                   </span>
                 {:else}
                   <span class="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-[#ffc3a5] border border-[#19231f]/30 text-[#19231f]">

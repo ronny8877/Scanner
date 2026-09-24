@@ -40,6 +40,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/health", s.withCORS(s.handleHealth))
+	mux.HandleFunc("/api/dictionary", s.withCORS(s.handleDictionary))
 	mux.HandleFunc("/api/scan", s.withCORS(s.handleScan))
 	mux.HandleFunc("/api/inspect", s.withCORS(s.handleInspect))
 	mux.HandleFunc("/api/history", s.withCORS(s.handleHistory))
@@ -47,6 +48,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/crawl", s.withCORS(s.handleCrawl))
 	mux.HandleFunc("/api/parallel-suite", s.withCORS(s.handleParallelSuite))
 	mux.HandleFunc("/api/jobs", s.withCORS(s.handleJobs))
+	mux.HandleFunc("/api/jobs/cancel", s.withCORS(s.handleJobCancel))
 	mux.HandleFunc("/api/watchlist", s.withCORS(s.handleWatchlist))
 	mux.HandleFunc("/api/watchlist/recheck", s.withCORS(s.handleWatchlistRecheck))
 
@@ -77,10 +79,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":         "ok",
 		"service":        "scanner-api",
-		"version":        "2.0.0",
+		"version":        "2.1.0",
 		"activeJobs":     len(s.Jobs.List()),
 		"savedWatchlist": len(s.Watchlist.List()),
 		"modes":          []string{"scan", "inspect", "history", "recon", "crawl", "parallel_suite", "watchlist"},
+	})
+}
+
+func (s *Server) handleDictionary(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"packs": domain.BuiltinDictionaryPacks,
 	})
 }
 
@@ -91,8 +99,8 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		Mutations:     true,
 		OnlyAvailable: false,
 		MinScore:      0,
-		Concurrency:   16,
-		MaxResults:    48,
+		Concurrency:   18,
+		MaxResults:    64,
 	}
 
 	if r.Method == http.MethodPost {
@@ -104,6 +112,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 		if tlds := r.URL.Query().Get("tlds"); tlds != "" {
 			opts.TLDs = splitCSV(tlds)
+		}
+		if dict := r.URL.Query().Get("dictionaryPack"); dict != "" {
+			opts.DictionaryPack = dict
 		}
 		if r.URL.Query().Get("onlyAvailable") == "true" {
 			opts.OnlyAvailable = true
@@ -118,18 +129,20 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job := s.Jobs.CreateJob(
-		"scan",
-		"Bulk Availability & Valuation Scan",
-		strings.Join(opts.Keywords, ", "),
-		16,
-	)
-	s.Jobs.UpdateProgress(job.ID, 45, fmt.Sprintf("Resolving %d TLDs across 16 parallel workers…", len(opts.TLDs)))
+	targetDesc := strings.Join(opts.Keywords, ", ")
+	if opts.DictionaryPack != "" {
+		targetDesc += " + [" + opts.DictionaryPack + "]"
+	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 28*time.Second)
+	defer baseCancel()
 
-	report := domain.ScanDomains(ctx, opts)
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "scan", "Bulk Availability & Valuation Scan", targetDesc, 18)
+	defer jobCancel()
+
+	s.Jobs.UpdateProgress(job.ID, 45, fmt.Sprintf("Resolving %d TLDs across 18 parallel workers…", len(opts.TLDs)))
+
+	report := domain.ScanDomains(jobCtx, opts)
 	summary := fmt.Sprintf("%d unclaimed · %d prime gems · %d checked", report.AvailableCount, report.HighValueCount, report.TotalChecked)
 	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
 
@@ -150,13 +163,14 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := s.Jobs.CreateJob("inspect", "RDAP Registration & DNS Dossier", target, 6)
-	s.Jobs.UpdateProgress(job.ID, 55, "Querying ICANN RDAP gateway & DNS NS/MX/TXT…")
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 14*time.Second)
+	defer baseCancel()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-	defer cancel()
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "inspect", "RDAP Registration & DNS Dossier", target, 6)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 55, "Querying ICANN RDAP gateway & DNS NS/MX/TXT/DMARC…")
 
-	result := domain.InspectDomain(ctx, target)
+	result := domain.InspectDomain(jobCtx, target)
 	summary := fmt.Sprintf("%s · Score %d/100", result.StatusSummary, result.Valuation.Score)
 	if result.DomainAge != "" {
 		summary = fmt.Sprintf("%s · Age %s", result.StatusSummary, result.DomainAge)
@@ -180,16 +194,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := s.Jobs.CreateJob("history", "Past Registration & Archive History", target, 4)
-	s.Jobs.UpdateProgress(job.ID, 50, "Querying Wayback CDX API & crt.sh CT logs…")
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 16*time.Second)
+	defer baseCancel()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 14*time.Second)
-	defer cancel()
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "history", "Past Registration & Archive History", target, 6)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 50, "Querying Wayback CDX + Availability API + RDAP + CT logs…")
 
-	report := domain.CheckDomainHistory(ctx, target)
+	report := domain.CheckDomainHistory(jobCtx, target)
 	summary := "Clean Virgin History"
 	if report.PreviouslyRegistered {
-		summary = fmt.Sprintf("Previously Registered (%d–%d · %d snaps)", report.FirstSeenYear, report.LastSeenYear, report.WaybackSnapshots)
+		summary = fmt.Sprintf("Active/Past Record (%d–%d · %d snaps)", report.FirstSeenYear, report.LastSeenYear, report.WaybackSnapshots)
 	}
 	s.Jobs.CompleteJob(job.ID, summary, report.CheckLatencyMs, report)
 
@@ -210,13 +225,14 @@ func (s *Server) handleRecon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := s.Jobs.CreateJob("recon", "Parallel Port, TLS & Security Recon", target, 28)
-	s.Jobs.UpdateProgress(job.ID, 40, "Probing 14 TCP ports, TLS 1.3 handshake & subdomains…")
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 16*time.Second)
+	defer baseCancel()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "recon", "Parallel Port, TLS & Security Recon", target, 28)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 40, "Probing 14 TCP ports, TLS 1.3 handshake, headers & subdomains…")
 
-	report := recon.RunRecon(ctx, target)
+	report := recon.RunRecon(jobCtx, target)
 	summary := fmt.Sprintf("%d open ports · Grade %s · %d subdomains", report.OpenPortsCount, report.SecurityGrade, len(report.Subdomains))
 	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
 
@@ -249,13 +265,14 @@ func (s *Server) handleCrawl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job := s.Jobs.CreateJob("crawl", "Site Structure & Link Graph Crawl", opts.TargetURL, 8)
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer baseCancel()
+
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "crawl", "Site Structure & Link Graph Crawl", opts.TargetURL, 8)
+	defer jobCancel()
 	s.Jobs.UpdateProgress(job.ID, 50, fmt.Sprintf("Crawling up to %d pages (depth %d)…", opts.MaxPages, opts.MaxDepth))
 
-	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
-	defer cancel()
-
-	report := crawler.CrawlSite(ctx, opts)
+	report := crawler.CrawlSite(jobCtx, opts)
 	summary := fmt.Sprintf("%d pages crawled · %d internal routes", report.PagesCrawled, report.TotalLinks)
 	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
 
@@ -298,6 +315,32 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" && r.Method == http.MethodPost {
+		var body struct {
+			ID string `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id = body.ID
+	}
+
+	if id == "all" || id == "" {
+		canceledCount := s.Jobs.CancelAllRunning()
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"canceled": canceledCount,
+			"jobs":     s.Jobs.List(),
+		})
+		return
+	}
+
+	ok := s.Jobs.CancelJob(id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"canceled": ok,
+		"jobs":     s.Jobs.List(),
+	})
+}
+
 func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -333,13 +376,15 @@ func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWatchlistRecheck(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-	defer cancel()
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer baseCancel()
 
 	items := s.Watchlist.List()
-	job := s.Jobs.CreateJob("watchlist_recheck", "Parallel Watchlist Vault Verification", fmt.Sprintf("%d saved domains", len(items)), len(items)*2)
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "watchlist_recheck", "Parallel Watchlist Vault Verification", fmt.Sprintf("%d saved domains", len(items)), len(items)*2)
+	defer jobCancel()
+
 	t0 := time.Now()
-	updated := s.Watchlist.RecheckAllParallel(ctx)
+	updated := s.Watchlist.RecheckAllParallel(jobCtx)
 	s.Jobs.CompleteJob(job.ID, fmt.Sprintf("Re-verified %d saved domains", len(updated)), time.Since(t0).Milliseconds(), updated)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

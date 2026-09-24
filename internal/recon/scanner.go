@@ -40,8 +40,10 @@ type TLSInfo struct {
 
 // SubdomainHit represents an active subdomain resolved via parallel DNS probing.
 type SubdomainHit struct {
-	Subdomain string   `json:"subdomain"`
-	IPs       []string `json:"ips"`
+	Subdomain    string   `json:"subdomain"`
+	IPs          []string `json:"ips"`
+	CNAME        string   `json:"cname,omitempty"`
+	TakeoverRisk string   `json:"takeoverRisk,omitempty"`
 }
 
 // SecurityCheck represents a single HTTP or DNS security control audit item.
@@ -51,19 +53,26 @@ type SecurityCheck struct {
 	Detail  string `json:"detail"`
 }
 
-// ReconReport aggregates parallel port scanning, TLS handshake, subdomains, and security posture.
+// ReconReport aggregates parallel port scanning, TLS handshake, subdomains, headers, and security posture.
 type ReconReport struct {
-	Domain         string          `json:"domain"`
-	TargetIP       string          `json:"targetIp"`
-	OpenPortsCount int             `json:"openPortsCount"`
-	PortsScanned   int             `json:"portsScanned"`
-	Ports          []PortProbe     `json:"ports"`
-	TLS            TLSInfo         `json:"tls"`
-	Subdomains     []SubdomainHit  `json:"subdomains"`
-	SecurityGrade  string          `json:"securityGrade"`
-	SecurityScore  int             `json:"securityScore"`
-	SecurityChecks []SecurityCheck `json:"securityChecks"`
-	DurationMs     int64           `json:"durationMs"`
+	Domain             string            `json:"domain"`
+	LiveSiteURL        string            `json:"liveSiteUrl"`
+	WaybackCalendarURL string            `json:"waybackCalendarUrl"`
+	TargetIP           string            `json:"targetIp"`
+	ReversePTR         string            `json:"reversePtr,omitempty"`
+	OpenPortsCount     int               `json:"openPortsCount"`
+	PortsScanned       int               `json:"portsScanned"`
+	Ports              []PortProbe       `json:"ports"`
+	TLS                TLSInfo           `json:"tls"`
+	Subdomains         []SubdomainHit    `json:"subdomains"`
+	HTTPHeaders        map[string]string `json:"httpHeaders,omitempty"`
+	HasRobotsTxt       bool              `json:"hasRobotsTxt"`
+	HasSecurityTxt     bool              `json:"hasSecurityTxt"`
+	HasSitemapXml      bool              `json:"hasSitemapXml"`
+	SecurityGrade      string            `json:"securityGrade"`
+	SecurityScore      int               `json:"securityScore"`
+	SecurityChecks     []SecurityCheck   `json:"securityChecks"`
+	DurationMs         int64             `json:"durationMs"`
 }
 
 type portTarget struct {
@@ -91,7 +100,7 @@ var standardPorts = []portTarget{
 }
 
 var commonSubPrefixes = []string{
-	"www", "api", "app", "dev", "staging", "docs", "mail", "status", "cdn", "auth", "admin", "blog",
+	"www", "api", "app", "dev", "staging", "docs", "mail", "status", "cdn", "auth", "admin", "blog", "portal", "beta",
 }
 
 // RunRecon executes a full parallel port scan, TLS inspection, subdomain enumeration, and security audit.
@@ -100,29 +109,39 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 	clean := domain.CleanDomainName(rawTarget)
 
 	report := ReconReport{
-		Domain:       clean,
-		PortsScanned: len(standardPorts),
+		Domain:             clean,
+		LiveSiteURL:        "https://" + clean,
+		WaybackCalendarURL: fmt.Sprintf("https://web.archive.org/web/*/%s", clean),
+		PortsScanned:       len(standardPorts),
+		HTTPHeaders:        make(map[string]string),
 	}
 
-	// Resolve primary IP
+	// Resolve primary IP & PTR
 	ips, _ := net.DefaultResolver.LookupHost(ctx, clean)
 	if len(ips) > 0 {
 		report.TargetIP = ips[0]
+		if ptrs, err := net.DefaultResolver.LookupAddr(ctx, ips[0]); err == nil && len(ptrs) > 0 {
+			report.ReversePTR = strings.TrimSuffix(ptrs[0], ".")
+		}
 	}
 
 	var (
-		wg         sync.WaitGroup
-		ports      []PortProbe
-		tlsInfo    TLSInfo
-		subdomains []SubdomainHit
-		secChecks  []SecurityCheck
-		secScore   int
-		secGrade   string
+		wg             sync.WaitGroup
+		ports          []PortProbe
+		tlsInfo        TLSInfo
+		subdomains     []SubdomainHit
+		secChecks      []SecurityCheck
+		secScore       int
+		secGrade       string
+		headersMap     map[string]string
+		hasRobots      bool
+		hasSecurityTxt bool
+		hasSitemap     bool
 	)
 
 	wg.Add(4)
 
-	// 1. Parallel Port Scanner (14 concurrent workers)
+	// 1. Parallel Port Scanner
 	go func() {
 		defer wg.Done()
 		ports = scanPortsParallel(ctx, clean)
@@ -134,16 +153,16 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 		tlsInfo = inspectTLS(ctx, clean)
 	}()
 
-	// 3. Parallel Subdomain Enumerator
+	// 3. Parallel Subdomain Enumerator + Takeover Check
 	go func() {
 		defer wg.Done()
 		subdomains = discoverSubdomainsParallel(ctx, clean)
 	}()
 
-	// 4. HTTP & DNS Security Posture Audit
+	// 4. HTTP Security Headers + Governance Files + SPF/DMARC Audit
 	go func() {
 		defer wg.Done()
-		secChecks, secScore, secGrade = auditSecurityPosture(ctx, clean)
+		secChecks, secScore, secGrade, headersMap, hasRobots, hasSecurityTxt, hasSitemap = auditSecurityPosture(ctx, clean)
 	}()
 
 	wg.Wait()
@@ -159,6 +178,10 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 	report.Ports = ports
 	report.TLS = tlsInfo
 	report.Subdomains = subdomains
+	report.HTTPHeaders = headersMap
+	report.HasRobotsTxt = hasRobots
+	report.HasSecurityTxt = hasSecurityTxt
+	report.HasSitemapXml = hasSitemap
 	report.SecurityChecks = secChecks
 	report.SecurityScore = secScore
 	report.SecurityGrade = secGrade
@@ -197,7 +220,6 @@ func scanPortsParallel(ctx context.Context, host string) []PortProbe {
 
 	wg.Wait()
 
-	// Sort open ports first, then by port number ascending
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Open != results[j].Open {
 			return results[i].Open
@@ -238,7 +260,7 @@ func inspectTLS(ctx context.Context, host string) TLSInfo {
 		info.DaysRemaining = int(time.Until(cert.NotAfter).Hours() / 24)
 
 		for i, san := range cert.DNSNames {
-			if i >= 8 {
+			if i >= 10 {
 				break
 			}
 			info.SANs = append(info.SANs, san)
@@ -255,13 +277,25 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 		wg   sync.WaitGroup
 	)
 
+	takeoverProviders := []string{
+		"github.io", "s3.amazonaws.com", "herokuapp.com", "azurewebsites.net", "pantheonsite.io", "ghost.io",
+	}
+
 	for _, sub := range commonSubPrefixes {
 		wg.Add(1)
 		go func(prefix string) {
 			defer wg.Done()
 			fqdn := prefix + "." + baseDomain
-			dnsCtx, cancel := context.WithTimeout(ctx, 1400*time.Millisecond)
+			dnsCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 			defer cancel()
+
+			var cnameStr string
+			if cn, err := net.DefaultResolver.LookupCNAME(dnsCtx, fqdn); err == nil {
+				cleanCn := strings.TrimSuffix(strings.ToLower(cn), ".")
+				if cleanCn != fqdn {
+					cnameStr = cleanCn
+				}
+			}
 
 			ips, err := net.DefaultResolver.LookupHost(dnsCtx, fqdn)
 			if err == nil && len(ips) > 0 {
@@ -272,10 +306,18 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 					}
 					cleanIPs = append(cleanIPs, ip)
 				}
+				risk := "Safe (Active IP Resolution)"
+				for _, prov := range takeoverProviders {
+					if strings.Contains(cnameStr, prov) {
+						risk = "External Cloud CNAME (" + prov + ")"
+					}
+				}
 				mu.Lock()
 				hits = append(hits, SubdomainHit{
-					Subdomain: fqdn,
-					IPs:       cleanIPs,
+					Subdomain:    fqdn,
+					IPs:          cleanIPs,
+					CNAME:        cnameStr,
+					TakeoverRisk: risk,
 				})
 				mu.Unlock()
 			}
@@ -289,26 +331,45 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 	return hits
 }
 
-func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, int, string) {
-	var checks []SecurityCheck
-	score := 0
+func auditSecurityPosture(ctx context.Context, host string) (
+	checks []SecurityCheck,
+	score int,
+	grade string,
+	headers map[string]string,
+	hasRobots, hasSecurityTxt, hasSitemap bool,
+) {
+	headers = make(map[string]string)
 
-	reqCtx, cancel := context.WithTimeout(ctx, 3200*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, 4000*time.Millisecond)
 	defer cancel()
 
-	client := &http.Client{Timeout: 3200 * time.Millisecond}
+	client := &http.Client{Timeout: 3500 * time.Millisecond}
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, "https://"+host, nil)
 	if req != nil {
-		req.Header.Set("User-Agent", "Scanner-Security-Auditor/1.0")
+		req.Header.Set("User-Agent", "Scanner-Security-Auditor/2.0")
 	}
 
 	resp, err := client.Do(req)
 	if err == nil {
 		defer resp.Body.Close()
 
+		interestingHeaders := []string{
+			"Server", "X-Powered-By", "CF-Ray", "Cache-Control",
+			"Strict-Transport-Security", "Content-Security-Policy",
+			"X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy", "Permissions-Policy",
+		}
+		for _, hk := range interestingHeaders {
+			if val := resp.Header.Get(hk); val != "" {
+				if len(val) > 85 {
+					val = val[:82] + "..."
+				}
+				headers[hk] = val
+			}
+		}
+
 		hsts := resp.Header.Get("Strict-Transport-Security") != ""
 		if hsts {
-			score += 25
+			score += 20
 		}
 		checks = append(checks, SecurityCheck{
 			Control: "Strict-Transport-Security (HSTS)",
@@ -323,7 +384,7 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 		checks = append(checks, SecurityCheck{
 			Control: "Content-Security-Policy (CSP)",
 			Passed:  csp,
-			Detail:  ternaryStr(csp, "Active XSS & injection policy header", "No CSP header configured"),
+			Detail:  ternaryStr(csp, "Active XSS & script policy header", "No CSP header configured"),
 		})
 
 		xfo := resp.Header.Get("X-Frame-Options") != "" || strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors")
@@ -335,6 +396,16 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 			Passed:  xfo,
 			Detail:  ternaryStr(xfo, "Frame embedding restricted", "Permits arbitrary iframe embedding"),
 		})
+
+		xcto := strings.EqualFold(resp.Header.Get("X-Content-Type-Options"), "nosniff")
+		if xcto {
+			score += 10
+		}
+		checks = append(checks, SecurityCheck{
+			Control: "MIME-Sniffing Protection (X-Content-Type-Options)",
+			Passed:  xcto,
+			Detail:  ternaryStr(xcto, "nosniff header active", "Missing nosniff protection"),
+		})
 	} else {
 		checks = append(checks, SecurityCheck{
 			Control: "HTTPS Web Listener",
@@ -342,6 +413,23 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 			Detail:  "No HTTPS web listener responded on port 443",
 		})
 	}
+
+	// Probe robots.txt, security.txt, sitemap.xml in parallel
+	var probeWg sync.WaitGroup
+	probeWg.Add(3)
+	go func() {
+		defer probeWg.Done()
+		hasRobots = checkEndpointStatus(reqCtx, client, "https://"+host+"/robots.txt")
+	}()
+	go func() {
+		defer probeWg.Done()
+		hasSecurityTxt = checkEndpointStatus(reqCtx, client, "https://"+host+"/.well-known/security.txt")
+	}()
+	go func() {
+		defer probeWg.Done()
+		hasSitemap = checkEndpointStatus(reqCtx, client, "https://"+host+"/sitemap.xml")
+	}()
+	probeWg.Wait()
 
 	// DNS SPF & DMARC checks
 	txts, _ := net.DefaultResolver.LookupTXT(reqCtx, host)
@@ -353,7 +441,7 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 		}
 	}
 	if hasSPF {
-		score += 20
+		score += 18
 	}
 	checks = append(checks, SecurityCheck{
 		Control: "DNS Sender Policy Framework (SPF)",
@@ -370,7 +458,7 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 		}
 	}
 	if hasDMARC {
-		score += 20
+		score += 17
 	}
 	checks = append(checks, SecurityCheck{
 		Control: "DNS DMARC Anti-Spoofing Policy",
@@ -378,13 +466,12 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 		Detail:  ternaryStr(hasDMARC, "Active _dmarc policy protecting domain spoofing", "No _dmarc record published"),
 	})
 
-	grade := "C"
 	switch {
-	case score >= 90:
+	case score >= 88:
 		grade = "A+"
-	case score >= 75:
+	case score >= 74:
 		grade = "A"
-	case score >= 60:
+	case score >= 58:
 		grade = "B"
 	case score >= 40:
 		grade = "C"
@@ -392,7 +479,20 @@ func auditSecurityPosture(ctx context.Context, host string) ([]SecurityCheck, in
 		grade = "D"
 	}
 
-	return checks, score, grade
+	return checks, score, grade, headers, hasRobots, hasSecurityTxt, hasSitemap
+}
+
+func checkEndpointStatus(ctx context.Context, client *http.Client, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 func tlsVersionName(v uint16) string {

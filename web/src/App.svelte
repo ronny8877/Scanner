@@ -16,6 +16,7 @@
     runSiteCrawl,
     runFullParallelSuite,
     fetchJobQueue,
+    cancelRunningJob,
     fetchWatchlist,
     saveDomainToVault,
     removeDomainFromVault,
@@ -37,7 +38,7 @@
   let backendOnline = $state<boolean>(false);
   let copiedCli = $state<boolean>(false);
 
-  // Mode 1: Bulk Availability Scan
+  // Mode 1: Bulk Availability & Dictionary Scan
   let scanReport = $state<ScanReport | null>(null);
   let scanLoading = $state<boolean>(false);
 
@@ -67,17 +68,21 @@
   let jobQueueOpen = $state<boolean>(false);
   let jobList = $state<Job[]>([]);
 
-  let cliPreview = $state<string>('scanner scan veltrix nova --tlds com,ai,io,dev,co,app --mutations');
+  let cliPreview = $state<string>('scanner scan veltrix nova --tlds com,ai,io,dev,co,app,xyz,sh --mutations');
 
   const savedDomainsSet = $derived(new Set(savedDomains.map((d) => d.domain.toLowerCase())));
   const runningJobsCount = $derived(jobList.filter((j) => j.status === 'RUNNING').length);
+  const anyJobRunning = $derived(
+    scanLoading || inspectLoading || crawlLoading || reconLoading || historyLoading || runningJobsCount > 0
+  );
 
   onMount(async () => {
     backendOnline = await checkBackendHealth();
     savedDomains = await fetchWatchlist();
     await handleRunScan({
       keywords: ['veltrix', 'nova'],
-      tlds: ['com', 'ai', 'io', 'dev', 'co', 'app'],
+      dictionaryPack: 'none',
+      tlds: ['com', 'ai', 'io', 'dev', 'co', 'app', 'xyz', 'sh'],
       mutations: true,
       onlyAvailable: false,
       minScore: 0,
@@ -89,8 +94,18 @@
     jobList = await fetchJobQueue();
   }
 
+  async function handleCancelJob(jobId?: string) {
+    jobList = await cancelRunningJob(jobId);
+    scanLoading = false;
+    inspectLoading = false;
+    crawlLoading = false;
+    reconLoading = false;
+    historyLoading = false;
+  }
+
   async function handleRunScan(opts: {
     keywords: string[];
+    dictionaryPack?: string;
     tlds: string[];
     mutations: boolean;
     onlyAvailable: boolean;
@@ -98,7 +113,9 @@
   }) {
     activeMode = 'scan';
     scanLoading = true;
+    const dictFlag = opts.dictionaryPack && opts.dictionaryPack !== 'none' ? `--dict ${opts.dictionaryPack}` : '';
     const flags = [
+      dictFlag,
       `--tlds ${opts.tlds.join(',')}`,
       opts.mutations ? '--mutations' : '--mutations=false',
       opts.onlyAvailable ? '--available' : '',
@@ -106,7 +123,7 @@
     ]
       .filter(Boolean)
       .join(' ');
-    cliPreview = `scanner scan ${opts.keywords.join(' ')} ${flags}`;
+    cliPreview = `scanner scan ${opts.keywords.join(' ')} ${flags}`.trim();
 
     const { report, liveBackend } = await runDomainScan(opts);
     scanReport = report;
@@ -256,39 +273,69 @@
 </script>
 
 <div class="min-h-dvh flex flex-col pb-16">
-  <!-- FLOATING PILL NAVIGATION -->
-  <div class="sticky top-4 z-40 px-3 sm:px-6">
+  <!-- RESPONSIVE FLOATING NAVIGATION (Clean 2-row card on mobile, floating pill on desktop) -->
+  <div class="sticky top-3 z-40 px-3 sm:px-6">
     <header
-      class="mx-auto max-w-6xl rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-wrap items-center justify-between gap-2"
+      class="mx-auto max-w-6xl rounded-2xl lg:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2.5 lg:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5"
     >
-      <!-- Studio Mark -->
-      <a
-        href="#top"
-        onclick={(e) => {
-          e.preventDefault();
-          activeMode = 'scan';
-        }}
-        class="flex items-center gap-2 pl-2 pr-3 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors"
-      >
-        <span
-          class="w-7 h-7 rounded-full bg-[#19231f] text-[#dffc78] flex items-center justify-center font-mono text-sm font-bold"
+      <!-- Top Row on Mobile / Left+Right on Desktop -->
+      <div class="flex items-center justify-between gap-2">
+        <!-- Studio Mark -->
+        <a
+          href="#top"
+          onclick={(e) => {
+            e.preventDefault();
+            activeMode = 'scan';
+          }}
+          class="flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors shrink-0"
         >
-          ◈
-        </span>
-        <span class="font-display font-bold text-sm tracking-tight text-[#19231f]">
-          Scanner <span class="font-serif-editorial font-normal text-base">Studio</span>
-        </span>
-      </a>
+          <span
+            class="w-7 h-7 rounded-full bg-[#19231f] text-[#dffc78] flex items-center justify-center font-mono text-sm font-bold shrink-0"
+          >
+            ◈
+          </span>
+          <span class="font-display font-bold text-sm tracking-tight text-[#19231f]">
+            Scanner <span class="font-serif-editorial font-normal text-base">Studio</span>
+          </span>
+        </a>
 
-      <!-- Mode Switcher Pills -->
+        <!-- Mobile Right Actions (Queue + Cancel) -->
+        <div class="flex lg:hidden items-center gap-1.5">
+          {#if anyJobRunning}
+            <button
+              type="button"
+              onclick={() => handleCancelJob()}
+              class="px-2.5 py-1 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] text-[#19231f] border border-[#19231f] cursor-pointer"
+            >
+              ✕ Stop Job
+            </button>
+          {/if}
+
+          <button
+            type="button"
+            onclick={async () => {
+              await refreshJobs();
+              jobQueueOpen = true;
+            }}
+            class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] text-[#19231f] border border-[#19231f] cursor-pointer flex items-center gap-1"
+          >
+            <span>⚡ Queue ({jobList.length})</span>
+            {#if runningJobsCount > 0}
+              <span class="w-2 h-2 rounded-full bg-[#19231f] animate-ping"></span>
+            {/if}
+          </button>
+        </div>
+      </div>
+
+      <!-- Mode Switcher Pills: Single-row horizontal scroll on mobile so it NEVER wraps into a tall oval -->
       <nav
         aria-label="Primary Studio Modes"
-        class="flex flex-wrap items-center gap-1 bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
+        class="w-full lg:w-auto flex items-center gap-1 overflow-x-auto whitespace-nowrap bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
       >
         <button
           type="button"
           onclick={() => (activeMode = 'scan')}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'scan'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -300,9 +347,9 @@
           type="button"
           onclick={() => {
             activeMode = 'inspect';
-            if (!inquiryData) handleInspectDomain('svelte.dev');
+            if (!inquiryData) handleInspectDomain('supercoloring.com');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'inspect'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -316,7 +363,7 @@
             activeMode = 'crawl';
             if (!crawlReport) handleCrawlDomain('svelte.dev');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'crawl'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -328,9 +375,9 @@
           type="button"
           onclick={() => {
             activeMode = 'recon';
-            if (!reconReport) handleRunRecon('svelte.dev');
+            if (!reconReport) handleRunRecon('supercoloring.com');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'recon'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -341,7 +388,7 @@
         <button
           type="button"
           onclick={() => (activeMode = 'vault')}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer flex items-center gap-1.5 {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 {activeMode ===
           'vault'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -357,8 +404,19 @@
         </button>
       </nav>
 
-      <!-- Enterprise Queue & CLI CTA Buttons -->
-      <div class="flex items-center gap-2">
+      <!-- Desktop Right Actions: Queue + Cancel Job + CLI CTA -->
+      <div class="hidden lg:flex items-center gap-2 shrink-0">
+        {#if anyJobRunning}
+          <button
+            type="button"
+            onclick={() => handleCancelJob()}
+            class="px-3 py-1.5 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffad85] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer"
+            title="Cancel currently running background job"
+          >
+            ✕ Cancel Job
+          </button>
+        {/if}
+
         <button
           type="button"
           onclick={async () => {
@@ -377,7 +435,7 @@
         <button
           type="button"
           onclick={copyCliCommand}
-          class="studio-btn-primary px-4 py-1.5 text-xs cursor-pointer hidden sm:flex items-center gap-1.5"
+          class="studio-btn-primary px-4 py-1.5 text-xs cursor-pointer flex items-center gap-1.5"
           title="Copy active Go CLI command"
         >
           <span>{copiedCli ? '✓ CLI Copied' : 'Copy CLI Cmd'}</span>
@@ -387,11 +445,11 @@
   </div>
 
   <!-- EDITORIAL STUDIO HERO & LIVE CLI BENTO -->
-  <div id="top" class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-8">
+  <div id="top" class="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-8 sm:pt-10 pb-8">
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
       <!-- 7-Col Editorial Title & Context -->
       <div class="lg:col-span-7 space-y-3">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#fffdf8] border border-[#19231f]/20 text-xs font-mono">
+        <div class="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-full bg-[#fffdf8] border border-[#19231f]/20 text-xs font-mono">
           <span
             class="w-2 h-2 rounded-full {backendOnline
               ? 'bg-[#19231f]'
@@ -399,18 +457,18 @@
           ></span>
           <span>
             {backendOnline
-              ? 'Go Parallel Engine Online (:8080) · RDAP + Wayback + Port/TLS Worker Pool'
+              ? 'Go Parallel Engine Online (:8080) · 24 TLDs · Dictionary Combinator · Wayback + CT + Port/TLS'
               : 'Standalone Studio · Run `./bin/scanner serve` for live sockets'}
           </span>
         </div>
 
-        <h1 class="text-4xl sm:text-5xl lg:text-[3.35rem] font-display font-bold leading-[1.06] text-[#19231f]">
+        <h1 class="text-3xl sm:text-5xl lg:text-[3.35rem] font-display font-bold leading-[1.06] text-[#19231f]">
           Uncover <span class="font-serif-editorial font-normal underline decoration-[#dffc78] decoration-4 underline-offset-4">unclaimed</span> domains &amp; map the <span class="font-serif-editorial font-normal">living</span> web.
         </h1>
 
-        <p class="text-base text-[#48534e] max-w-2xl leading-relaxed">
-          An editorial domain intelligence &amp; surface reconnaissance studio: parallel availability scoring,
-          Wayback &amp; CT past registration history, 14-port TCP/TLS inspection, and persistent domain vault.
+        <p class="text-sm sm:text-base text-[#48534e] max-w-2xl leading-relaxed">
+          Editorial domain intelligence &amp; surface reconnaissance studio: 24-TLD dictionary search, calibrated
+          registrar vs. aftermarket valuation, clickable Wayback Machine archives, 14-port TCP/TLS inspection, and live job cancellation.
         </p>
       </div>
 
@@ -437,7 +495,7 @@
         </div>
 
         <div class="flex items-center justify-between text-[11px] text-[#fffdf8]/70 font-mono">
-          <span>Workers: Concurrent Go Pool</span>
+          <span>Workers: Cancellable Go Pool</span>
           <span>Vault: {savedDomains.length} saved</span>
         </div>
       </div>
@@ -451,6 +509,7 @@
         report={scanReport}
         loading={scanLoading}
         onRunScan={handleRunScan}
+        onCancelJob={() => handleCancelJob()}
         onInspectDomain={handleInspectDomain}
         onCheckHistory={handleCheckHistory}
         onRunRecon={handleRunRecon}
@@ -463,6 +522,7 @@
         inquiry={inquiryData}
         loading={inspectLoading}
         onInspect={handleInspectDomain}
+        onCancelJob={() => handleCancelJob()}
         onCheckHistory={handleCheckHistory}
         onRunRecon={handleRunRecon}
         onCrawlDomain={handleCrawlDomain}
@@ -482,6 +542,7 @@
         loading={reconLoading}
         onRunRecon={handleRunRecon}
         onRunFullSuite={handleRunFullSuite}
+        onCancelJob={() => handleCancelJob()}
         onCheckHistory={handleCheckHistory}
         onSaveDomain={handleToggleSave}
         {savedDomainsSet}
@@ -511,13 +572,13 @@
       <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
         <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
           <div class="flex items-center justify-between">
-            <span class="studio-label">01 · Bulk Value</span>
+            <span class="studio-label">01 · Dictionary Scan</span>
             <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#dffc78] border border-[#19231f]">
-              16 Workers
+              24 TLDs
             </span>
           </div>
           <p class="text-xs text-[#48534e] leading-relaxed">
-            Scan roots across TLDs with affix variations and filter for unclaimed gems.
+            Scan curated dictionary packs across 24 TLDs with calibrated registrar &amp; flip pricing.
           </p>
           <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner veltrix --available</pre>
         </div>
@@ -526,13 +587,13 @@
           <div class="flex items-center justify-between">
             <span class="studio-label">02 · Past History</span>
             <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] border border-[#19231f]">
-              Wayback + CT
+              Wayback + RDAP + CT
             </span>
           </div>
           <p class="text-xs text-[#48534e] leading-relaxed">
-            Verify if an unclaimed domain was previously registered or hosted years ago.
+            Inspect Wayback yearly snapshots, RDAP original creation date, and historical TLS logs.
           </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner history svelte.dev</pre>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner history supercoloring.com</pre>
         </div>
 
         <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
@@ -543,9 +604,9 @@
             </span>
           </div>
           <p class="text-xs text-[#48534e] leading-relaxed">
-            Probe 14 TCP ports in parallel, inspect TLS 1.3 SANs, and grade SPF/DMARC/HSTS.
+            Probe 14 TCP ports, HTTP header ledger, `robots.txt`/`security.txt`, and CNAME takeover risk.
           </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner recon svelte.dev</pre>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner recon supercoloring.com</pre>
         </div>
 
         <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
@@ -571,6 +632,7 @@
     targetDomain={historyTarget}
     report={historyReport}
     onClose={() => (historyModalOpen = false)}
+    onCancelJob={() => handleCancelJob()}
     onInspectRDAP={handleInspectDomain}
     onRunRecon={handleRunRecon}
   />
@@ -582,5 +644,6 @@
     onClose={() => (jobQueueOpen = false)}
     onSelectJob={handleSelectJob}
     onDispatchParallelSuite={handleRunFullSuite}
+    onCancelJob={handleCancelJob}
   />
 </div>

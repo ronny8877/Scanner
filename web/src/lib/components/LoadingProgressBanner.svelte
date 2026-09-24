@@ -7,9 +7,10 @@
     target: string;
     workers: number;
     steps: string[];
+    onCancel?: () => void;
   }
 
-  let { title, target, workers, steps }: Props = $props();
+  let { title, target, workers, steps, onCancel }: Props = $props();
   let progressBarEl = $state<HTMLElement | null>(null);
   let activeStepIndex = $state(0);
   let elapsedMs = $state(0);
@@ -58,8 +59,20 @@
       </div>
     </div>
 
-    <div class="px-3.5 py-1 rounded-full bg-[#fffdf8]/10 border border-[#fffdf8]/20 font-mono text-xs text-[#dffc78]">
-      {(elapsedMs / 1000).toFixed(2)}s elapsed
+    <div class="flex items-center gap-2">
+      <div class="px-3.5 py-1 rounded-full bg-[#fffdf8]/10 border border-[#fffdf8]/20 font-mono text-xs text-[#dffc78]">
+        {(elapsedMs / 1000).toFixed(2)}s elapsed
+      </div>
+
+      {#if onCancel}
+        <button
+          type="button"
+          onclick={onCancel}
+          class="px-3.5 py-1 rounded-full bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] font-display font-bold text-xs border border-[#19231f] transition-colors cursor-pointer"
+        >
+          ✕ Cancel Job
+        </button>
+      {/if}
     </div>
   </div>
 
