@@ -1,4 +1,15 @@
-import type { ScanReport, DomainInquiry, CrawlReport, Valuation, ScanResultItem } from './types';
+import type {
+  ScanReport,
+  DomainInquiry,
+  CrawlReport,
+  Valuation,
+  ScanResultItem,
+  HistoryReport,
+  ReconReport,
+  SavedDomain,
+  Job,
+  ParallelSuiteResult,
+} from './types';
 
 const API_BASE = 'http://localhost:8080';
 
@@ -28,7 +39,7 @@ export async function runDomainScan(params: {
         mutations: params.mutations,
         onlyAvailable: params.onlyAvailable,
         minScore: params.minScore,
-        concurrency: 14,
+        concurrency: 16,
         maxResults: 48,
       }),
     });
@@ -51,6 +62,28 @@ export async function runDomainInspect(domainInput: string): Promise<{ inquiry: 
   }
 }
 
+export async function runDomainHistory(domainInput: string): Promise<{ history: HistoryReport; liveBackend: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/history?domain=${encodeURIComponent(domainInput)}`);
+    if (!res.ok) throw new Error('Backend history failed');
+    const history: HistoryReport = await res.json();
+    return { history, liveBackend: true };
+  } catch {
+    return { history: synthesizeHistoryReport(domainInput), liveBackend: false };
+  }
+}
+
+export async function runPortRecon(domainInput: string): Promise<{ recon: ReconReport; liveBackend: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/recon?domain=${encodeURIComponent(domainInput)}`);
+    if (!res.ok) throw new Error('Backend recon failed');
+    const recon: ReconReport = await res.json();
+    return { recon, liveBackend: true };
+  } catch {
+    return { recon: synthesizeReconReport(domainInput), liveBackend: false };
+  }
+}
+
 export async function runSiteCrawl(params: {
   targetUrl: string;
   maxPages: number;
@@ -70,7 +103,128 @@ export async function runSiteCrawl(params: {
   }
 }
 
-// --- Client-side fallback synthesis when `scanner serve` is not yet started ---
+export async function runFullParallelSuite(
+  domainInput: string
+): Promise<{ suite: ParallelSuiteResult; liveBackend: boolean }> {
+  try {
+    const res = await fetch(`${API_BASE}/api/parallel-suite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: domainInput }),
+    });
+    if (!res.ok) throw new Error('Parallel suite failed');
+    const suite: ParallelSuiteResult = await res.json();
+    return { suite, liveBackend: true };
+  } catch {
+    const clean = domainInput.trim().toLowerCase();
+    return {
+      suite: {
+        domain: clean,
+        inquiry: synthesizeDomainInquiry(clean),
+        history: synthesizeHistoryReport(clean),
+        recon: synthesizeReconReport(clean),
+        crawl: synthesizeCrawlReport(clean),
+      },
+      liveBackend: false,
+    };
+  }
+}
+
+export async function fetchJobQueue(): Promise<Job[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/jobs`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.jobs ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchWatchlist(): Promise<SavedDomain[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist`);
+    if (!res.ok) throw new Error('Watchlist fetch failed');
+    const data = await res.json();
+    return data.items ?? [];
+  } catch {
+    const raw = localStorage.getItem('scanner_watchlist');
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        // ignore
+      }
+    }
+    return [];
+  }
+}
+
+export async function saveDomainToVault(params: {
+  domain: string;
+  available?: boolean;
+  notes?: string;
+  tags?: string[];
+}): Promise<SavedDomain[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Failed to save');
+    return await fetchWatchlist();
+  } catch {
+    const current = await fetchWatchlist();
+    const now = new Date().toISOString();
+    const clean = params.domain.toLowerCase().trim();
+    const filtered = current.filter((i) => i.domain !== clean);
+    const next: SavedDomain[] = [
+      {
+        domain: clean,
+        available: params.available ?? true,
+        status: params.available ? 'Available' : 'Registered',
+        valuation: evaluateLocal(clean),
+        notes: params.notes || 'Saved in studio session',
+        tags: params.tags?.length ? params.tags : ['Shortlist'],
+        savedAt: now,
+        lastCheckedAt: now,
+      },
+      ...filtered,
+    ];
+    localStorage.setItem('scanner_watchlist', JSON.stringify(next));
+    return next;
+  }
+}
+
+export async function removeDomainFromVault(domainStr: string): Promise<SavedDomain[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist?domain=${encodeURIComponent(domainStr)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error('Delete failed');
+    const data = await res.json();
+    return data.items ?? [];
+  } catch {
+    const current = await fetchWatchlist();
+    const next = current.filter((i) => i.domain !== domainStr.toLowerCase().trim());
+    localStorage.setItem('scanner_watchlist', JSON.stringify(next));
+    return next;
+  }
+}
+
+export async function recheckWatchlistParallel(): Promise<SavedDomain[]> {
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist/recheck`, { method: 'POST' });
+    if (!res.ok) throw new Error('Recheck failed');
+    const data = await res.json();
+    return data.items ?? [];
+  } catch {
+    return await fetchWatchlist();
+  }
+}
+
+// --- Client-side fallback synthesis ---
 
 function evaluateLocal(domainStr: string): Valuation {
   const [name = 'nova', tld = 'com'] = domainStr.toLowerCase().split('.');
@@ -110,7 +264,7 @@ function synthesizeScanReport(params: {
   onlyAvailable: boolean;
   minScore: number;
 }): ScanReport {
-  const seeds = params.keywords.length ? params.keywords : ['nova', 'pulse'];
+  const seeds = params.keywords.length ? params.keywords : ['veltrix', 'nova'];
   const suffixes = params.mutations ? ['', 'hq', 'labs', 'flow', 'grid', 'core', 'cloud'] : [''];
   const items: ScanResultItem[] = [];
 
@@ -157,9 +311,9 @@ function synthesizeScanReport(params: {
 }
 
 function synthesizeDomainInquiry(raw: string): DomainInquiry {
-  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'novapulse.ai';
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   const full = clean.includes('.') ? clean : `${clean}.com`;
-  const isAvailable = full.includes('hq') || full.includes('pulse') || full.endsWith('.ai');
+  const isAvailable = full.includes('hq') || full.includes('veltrix') || full.endsWith('.ai');
   return {
     domain: full,
     available: isAvailable,
@@ -188,12 +342,97 @@ function synthesizeDomainInquiry(raw: string): DomainInquiry {
   };
 }
 
+function synthesizeHistoryReport(raw: string): HistoryReport {
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
+  const isVirgin = clean.includes('veltrix') || clean.includes('nexora');
+  if (isVirgin) {
+    return {
+      domain: clean,
+      previouslyRegistered: false,
+      historyVerdict: 'Clean Virgin Domain (No Past Registration Traces)',
+      summaryNote:
+        'Zero historical snapshots in Internet Archive Wayback Machine and zero past SSL certificates in Certificate Transparency logs.',
+      totalSpanYears: 0,
+      waybackSnapshots: 0,
+      certCount: 0,
+      checkLatencyMs: 112,
+    };
+  }
+  return {
+    domain: clean,
+    previouslyRegistered: true,
+    historyVerdict: 'Previously Registered / Historical Footprint Found',
+    summaryNote: `Historical footprint confirmed between 2018 and 2026 (94 Wayback captures, 18 TLS certificates, 4 past subdomains).`,
+    firstSeenAt: '2018-11-24',
+    lastSeenAt: '2026-08-14',
+    firstSeenYear: 2018,
+    lastSeenYear: 2026,
+    totalSpanYears: 9,
+    waybackSnapshots: 94,
+    activeYears: ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'],
+    certCount: 18,
+    pastIssuers: ["Let's Encrypt", 'Cloudflare Inc', 'Google Trust Services'],
+    pastSubdomains: [`api.${clean}`, `docs.${clean}`, `staging.${clean}`, `blog.${clean}`],
+    milestones: [
+      { date: '2018-11-24', source: 'Wayback Archive', event: 'First archived web snapshot captured on 2018-11-24' },
+      { date: '2019-02-03', source: 'CT Log (crt.sh)', event: 'First TLS/SSL certificate issued (18 total historical certs)' },
+      { date: '2026-08-14', source: 'Wayback Archive', event: 'Most recent web crawl capture (94 total snapshots across 9 active years)' },
+    ],
+    checkLatencyMs: 184,
+  };
+}
+
+function synthesizeReconReport(raw: string): ReconReport {
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
+  return {
+    domain: clean,
+    targetIp: '104.21.44.19',
+    openPortsCount: 3,
+    portsScanned: 14,
+    ports: [
+      { port: 80, service: 'HTTP', protocol: 'TCP', open: true, latencyMs: 19, category: 'Web', riskNote: 'Standard web traffic' },
+      { port: 443, service: 'HTTPS', protocol: 'TCP', open: true, latencyMs: 18, category: 'Web', riskNote: 'Encrypted TLS web traffic' },
+      { port: 8443, service: 'HTTPS Alt', protocol: 'TCP', open: true, latencyMs: 24, category: 'Web', riskNote: 'Alternative TLS web service' },
+      { port: 22, service: 'SSH', protocol: 'TCP', open: false, latencyMs: 120, category: 'Remote Access' },
+      { port: 3306, service: 'MySQL', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },
+      { port: 5432, service: 'PostgreSQL', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },
+      { port: 6379, service: 'Redis', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },
+    ],
+    tls: {
+      supported: true,
+      version: 'TLS 1.3',
+      cipherSuite: 'TLS_AES_128_GCM_SHA256',
+      issuer: 'Google Trust Services WE1',
+      subject: clean,
+      validFrom: '2026-07-01',
+      validUntil: '2026-10-01',
+      daysRemaining: 68,
+      sans: [clean, `*.${clean}`],
+    },
+    subdomains: [
+      { subdomain: `www.${clean}`, ips: ['104.21.44.19'] },
+      { subdomain: `docs.${clean}`, ips: ['104.21.44.19'] },
+      { subdomain: `api.${clean}`, ips: ['172.67.188.91'] },
+    ],
+    securityGrade: 'A',
+    securityScore: 85,
+    securityChecks: [
+      { control: 'Strict-Transport-Security (HSTS)', passed: true, detail: 'Enforces encrypted HTTPS connections' },
+      { control: 'Content-Security-Policy (CSP)', passed: true, detail: 'Active XSS & injection policy header' },
+      { control: 'Clickjacking Defense (X-Frame / Ancestors)', passed: true, detail: 'Frame embedding restricted' },
+      { control: 'DNS Sender Policy Framework (SPF)', passed: true, detail: 'Authorized outbound mail servers declared' },
+      { control: 'DNS DMARC Anti-Spoofing Policy', passed: false, detail: 'No _dmarc record published' },
+    ],
+    durationMs: 310,
+  };
+}
+
 function synthesizeCrawlReport(rawUrl: string): CrawlReport {
   const host = rawUrl.replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   return {
     rootUrl: `https://${host}`,
     host,
-    pagesCrawled: 8,
+    pagesCrawled: 6,
     totalLinks: 64,
     externalCount: 11,
     techHeaders: ['Server: Cloudflare', 'Platform: Vercel Edge'],

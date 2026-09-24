@@ -32,6 +32,8 @@ func init() {
 
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(inspectCmd)
+	rootCmd.AddCommand(historyCmd)
+	rootCmd.AddCommand(reconCmd)
 	rootCmd.AddCommand(crawlCmd)
 	rootCmd.AddCommand(serveCmd)
 }

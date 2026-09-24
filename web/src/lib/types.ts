@@ -62,6 +62,78 @@ export interface DomainInquiry {
   checkLatencyMs: number;
 }
 
+export interface HistoryTimeline {
+  date: string;
+  source: string;
+  event: string;
+}
+
+export interface HistoryReport {
+  domain: string;
+  previouslyRegistered: boolean;
+  historyVerdict: string;
+  summaryNote: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  firstSeenYear?: number;
+  lastSeenYear?: number;
+  totalSpanYears: number;
+  waybackSnapshots: number;
+  activeYears?: string[];
+  certCount: number;
+  pastIssuers?: string[];
+  pastSubdomains?: string[];
+  milestones?: HistoryTimeline[];
+  checkLatencyMs: number;
+}
+
+export interface PortProbe {
+  port: number;
+  service: string;
+  protocol: string;
+  open: boolean;
+  latencyMs: number;
+  category: string;
+  riskNote?: string;
+}
+
+export interface TLSInfo {
+  supported: boolean;
+  version?: string;
+  cipherSuite?: string;
+  issuer?: string;
+  subject?: string;
+  validFrom?: string;
+  validUntil?: string;
+  daysRemaining: number;
+  sans?: string[];
+}
+
+export interface SubdomainHit {
+  subdomain: string;
+  ips: string[];
+}
+
+export interface SecurityCheck {
+  control: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface ReconReport {
+  domain: string;
+  targetIp: string;
+  openPortsCount: number;
+  portsScanned: number;
+  ports: PortProbe[];
+  tls: TLSInfo;
+  subdomains: SubdomainHit[];
+  securityGrade: string;
+  securityScore: number;
+  securityChecks: SecurityCheck[];
+  durationMs: number;
+}
+
 export interface PageInfo {
   url: string;
   path: string;
@@ -98,4 +170,40 @@ export interface CrawlReport {
   durationMs: number;
   pages: PageInfo[];
   tree: SiteNode;
+}
+
+export interface SavedDomain {
+  domain: string;
+  available: boolean;
+  status: string;
+  valuation: Valuation;
+  notes?: string;
+  tags?: string[];
+  previouslyRegistered?: boolean;
+  firstSeenYear?: number;
+  savedAt: string;
+  lastCheckedAt: string;
+}
+
+export interface Job {
+  id: string;
+  type: 'scan' | 'inspect' | 'history' | 'recon' | 'crawl' | 'parallel_suite' | 'watchlist_recheck' | string;
+  title: string;
+  target: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  progress: number;
+  phase: string;
+  workers: number;
+  resultSummary: string;
+  createdAt: string;
+  durationMs: number;
+  result?: unknown;
+}
+
+export interface ParallelSuiteResult {
+  domain: string;
+  inquiry: DomainInquiry;
+  history: HistoryReport;
+  recon: ReconReport;
+  crawl: CrawlReport;
 }

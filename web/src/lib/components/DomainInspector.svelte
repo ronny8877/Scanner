@@ -1,14 +1,29 @@
 <script lang="ts">
   import type { DomainInquiry } from '../types';
+  import { motionCard } from '../motion';
+  import LoadingProgressBanner from './LoadingProgressBanner.svelte';
 
   interface Props {
     inquiry: DomainInquiry | null;
     loading: boolean;
     onInspect: (domain: string) => void;
+    onCheckHistory: (domain: string) => void;
+    onRunRecon: (domain: string) => void;
     onCrawlDomain: (domain: string) => void;
+    onToggleSave: (domain: string, available: boolean) => void;
+    savedDomainsSet: Set<string>;
   }
 
-  let { inquiry, loading, onInspect, onCrawlDomain }: Props = $props();
+  let {
+    inquiry,
+    loading,
+    onInspect,
+    onCheckHistory,
+    onRunRecon,
+    onCrawlDomain,
+    onToggleSave,
+    savedDomainsSet,
+  }: Props = $props();
   let domainInput = $state('svelte.dev');
 
   const quickExamples = ['svelte.dev', 'golang.org', 'linear.app', 'veltrixhq.ai'];
@@ -46,6 +61,7 @@
 <section aria-labelledby="rdap-dossier-heading" class="space-y-6">
   <!-- Top Inquiry Bar Card -->
   <form
+    use:motionCard
     onsubmit={handleSubmit}
     class="bento-card p-6 sm:p-7 flex flex-col lg:flex-row lg:items-end justify-between gap-5"
   >
@@ -92,19 +108,44 @@
     </div>
   </form>
 
-  {#if inquiry}
+  {#if loading}
+    <LoadingProgressBanner
+      title="Authoritative RDAP & DNS Lookup"
+      target={domainInput}
+      workers={6}
+      steps={[
+        'Resolving Live DNS NS, A, AAAA, MX & TXT Records',
+        'Querying Authoritative ICANN RDAP Registry Endpoint',
+        'Calculating Tenure, Expiry Countdown & Appraisal',
+      ]}
+    />
+  {:else if inquiry}
     <!-- Asymmetric Dossier Header Bento: 8-Col Identity Certificate + 4-Col Valuation Stamp -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
       <div
+        use:motionCard={{ delay: 0.04 }}
         class="lg:col-span-8 bento-card p-6 sm:p-7 flex flex-col justify-between gap-4 {inquiry.available
           ? 'bg-[#dffc78]/35'
           : 'bg-[#fffdf8]'}"
       >
         <div class="flex flex-wrap items-center justify-between gap-3">
           <span class="studio-label">Registry Certificate</span>
-          <span class="text-xs font-mono text-[#48534e]">
-            Resolved in {inquiry.checkLatencyMs}ms · {inquiry.registryHandle || 'Authoritative RDAP'}
-          </span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onclick={() => onToggleSave(inquiry.domain, inquiry.available)}
+              class="px-3 py-1 rounded-full text-xs font-display font-bold border border-[#19231f] cursor-pointer {savedDomainsSet.has(
+                inquiry.domain
+              )
+                ? 'bg-[#dffc78] text-[#19231f]'
+                : 'bg-[#fffdf8] text-[#19231f] hover:bg-[#dffc78]'}"
+            >
+              {savedDomainsSet.has(inquiry.domain) ? '★ Saved in Vault' : '☆ Save to Vault'}
+            </button>
+            <span class="text-xs font-mono text-[#48534e]">
+              {inquiry.checkLatencyMs}ms · {inquiry.registryHandle || 'Authoritative RDAP'}
+            </span>
+          </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-4 my-1">
@@ -136,26 +177,44 @@
             </p>
           {:else if inquiry.available}
             <p class="text-[#19231f] text-sm">
-              No active NS delegation or registry lock detected — open for immediate registration.
+              No active NS delegation or registry lock detected — check past archive history below before claiming!
             </p>
           {:else}
             <p class="text-[#48534e]">Active DNS delegation verified across global nameservers.</p>
           {/if}
 
-          {#if !inquiry.available}
+          <div class="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onclick={() => onCrawlDomain(inquiry.domain)}
+              onclick={() => onCheckHistory(inquiry.domain)}
+              class="px-4 py-2 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] border-[1.5px] border-[#19231f] cursor-pointer"
+            >
+              ⏳ Check Past Registration History
+            </button>
+
+            <button
+              type="button"
+              onclick={() => onRunRecon(inquiry.domain)}
               class="studio-btn-ink px-4 py-2 text-xs cursor-pointer"
             >
-              Map Site Architecture →
+              Ports & TLS →
             </button>
-          {/if}
+
+            {#if !inquiry.available}
+              <button
+                type="button"
+                onclick={() => onCrawlDomain(inquiry.domain)}
+                class="px-4 py-2 rounded-full text-xs font-display font-semibold bg-[#f4f1e9] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f] cursor-pointer"
+              >
+                Site Tree →
+              </button>
+            {/if}
+          </div>
         </div>
       </div>
 
       <!-- 4-Column Aftermarket Stamp Card -->
-      <div class="lg:col-span-4 bento-card p-6 sm:p-7 flex flex-col justify-between bg-[#d9d6fc]/55">
+      <div use:motionCard={{ delay: 0.08 }} class="lg:col-span-4 bento-card p-6 sm:p-7 flex flex-col justify-between bg-[#d9d6fc]/55">
         <div class="flex items-center justify-between">
           <span class="studio-label text-[#19231f]">Valuation Appraisal</span>
           <span class="px-2.5 py-0.5 rounded-full text-xs font-mono bg-[#fffdf8] border border-[#19231f]">
@@ -184,7 +243,7 @@
     <!-- Main Asymmetric Split: 6-Col Registration Chronology + 6-Col DNS Blueprint -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <!-- Registration Timeline & EPP Statuses -->
-      <div class="lg:col-span-6 bento-card p-6 sm:p-7 space-y-5">
+      <div use:motionCard={{ delay: 0.1 }} class="lg:col-span-6 bento-card p-6 sm:p-7 space-y-5">
         <div class="flex items-center justify-between border-b border-[#19231f]/10 pb-3.5">
           <h4 class="font-display font-bold text-base text-[#19231f]">
             Registration Chronology & Custody
@@ -193,14 +252,21 @@
         </div>
 
         {#if inquiry.available}
-          <div class="rounded-2xl bg-[#dffc78]/45 border border-[#19231f] p-5 space-y-2">
+          <div class="rounded-2xl bg-[#dffc78]/45 border border-[#19231f] p-5 space-y-3">
             <div class="font-display font-bold text-base text-[#19231f]">
               Unoccupied in Authoritative Registry
             </div>
             <p class="text-xs text-[#19231f]/80 leading-relaxed">
               This domain has zero active `NS` or `A` records and returned HTTP 404 from the ICANN RDAP gateway,
-              confirming it is empty and claimable.
+              confirming it is empty right now. Want to verify if someone owned it years ago?
             </p>
+            <button
+              type="button"
+              onclick={() => onCheckHistory(inquiry.domain)}
+              class="studio-btn-primary px-4 py-2 text-xs cursor-pointer"
+            >
+              ⏳ Verify Past Ownership in Wayback & CT Logs →
+            </button>
           </div>
         {:else}
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -259,7 +325,7 @@
       </div>
 
       <!-- DNS Infrastructure Blueprint Card -->
-      <div class="lg:col-span-6 bento-card p-6 sm:p-7 space-y-5">
+      <div use:motionCard={{ delay: 0.14 }} class="lg:col-span-6 bento-card p-6 sm:p-7 space-y-5">
         <div class="flex items-center justify-between border-b border-[#19231f]/10 pb-3.5">
           <h4 class="font-display font-bold text-base text-[#19231f]">
             DNS Zone Blueprint & Routing

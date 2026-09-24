@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { CrawlReport, SiteNode, PageInfo } from '../types';
   import TreeItem from './TreeItem.svelte';
+  import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import { motionCard } from '../motion';
 
   interface Props {
     report: CrawlReport | null;
@@ -44,6 +46,7 @@
 <section aria-labelledby="site-cartography-heading" class="space-y-6">
   <!-- Top Crawler Command Card -->
   <form
+    use:motionCard
     onsubmit={submitCrawl}
     class="bento-card p-6 sm:p-7 flex flex-col lg:flex-row lg:items-end justify-between gap-5"
   >
@@ -113,7 +116,18 @@
     </div>
   </form>
 
-  {#if report}
+  {#if loading}
+    <LoadingProgressBanner
+      title="Concurrent Site Structure Crawl"
+      target={targetUrl}
+      workers={8}
+      steps={[
+        `Fetching Root Document & Discovering Internal Anchor Graph`,
+        `Crawling Up to ${maxPages} Pages Across Depth ${maxDepth}`,
+        'Constructing Hierarchical URL Segment Tree',
+      ]}
+    />
+  {:else if report}
     <!-- Asymmetric Bento: 7-Col Interactive Hierarchy Tree + 5-Col Route Specimen & Telemetry -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       <!-- 7-Col Interactive Site Tree -->

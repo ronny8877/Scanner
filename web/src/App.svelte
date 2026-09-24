@@ -3,28 +3,78 @@
   import AvailabilityScanner from './lib/components/AvailabilityScanner.svelte';
   import DomainInspector from './lib/components/DomainInspector.svelte';
   import SiteCrawler from './lib/components/SiteCrawler.svelte';
-  import { checkBackendHealth, runDomainScan, runDomainInspect, runSiteCrawl } from './lib/api';
-  import type { ScanReport, DomainInquiry, CrawlReport } from './lib/types';
+  import PortReconStudio from './lib/components/PortReconStudio.svelte';
+  import WatchlistVault from './lib/components/WatchlistVault.svelte';
+  import HistoryModal from './lib/components/HistoryModal.svelte';
+  import JobQueueDrawer from './lib/components/JobQueueDrawer.svelte';
+  import {
+    checkBackendHealth,
+    runDomainScan,
+    runDomainInspect,
+    runDomainHistory,
+    runPortRecon,
+    runSiteCrawl,
+    runFullParallelSuite,
+    fetchJobQueue,
+    fetchWatchlist,
+    saveDomainToVault,
+    removeDomainFromVault,
+    recheckWatchlistParallel,
+  } from './lib/api';
+  import type {
+    ScanReport,
+    DomainInquiry,
+    CrawlReport,
+    HistoryReport,
+    ReconReport,
+    SavedDomain,
+    Job,
+  } from './lib/types';
 
-  type Mode = 'scan' | 'inspect' | 'crawl';
+  type Mode = 'scan' | 'inspect' | 'crawl' | 'recon' | 'vault';
 
   let activeMode = $state<Mode>('scan');
   let backendOnline = $state<boolean>(false);
   let copiedCli = $state<boolean>(false);
 
+  // Mode 1: Bulk Availability Scan
   let scanReport = $state<ScanReport | null>(null);
   let scanLoading = $state<boolean>(false);
 
+  // Mode 2: RDAP & DNS Dossier
   let inquiryData = $state<DomainInquiry | null>(null);
   let inspectLoading = $state<boolean>(false);
 
+  // Mode 3: Site Cartography
   let crawlReport = $state<CrawlReport | null>(null);
   let crawlLoading = $state<boolean>(false);
 
+  // Mode 4: Port, TLS & Security Surface Recon
+  let reconReport = $state<ReconReport | null>(null);
+  let reconLoading = $state<boolean>(false);
+
+  // Mode 5: Saved Watchlist Vault
+  let savedDomains = $state<SavedDomain[]>([]);
+  let recheckingVault = $state<boolean>(false);
+
+  // Past Registration History Modal
+  let historyModalOpen = $state<boolean>(false);
+  let historyLoading = $state<boolean>(false);
+  let historyTarget = $state<string>('');
+  let historyReport = $state<HistoryReport | null>(null);
+
+  // Enterprise Job Queue
+  let jobQueueOpen = $state<boolean>(false);
+  let jobList = $state<Job[]>([]);
+
   let cliPreview = $state<string>('scanner scan veltrix nova --tlds com,ai,io,dev,co,app --mutations');
+
+  const savedDomainsSet = $derived(new Set(savedDomains.map((d) => d.domain.toLowerCase())));
+  const runningJobsCount = $derived(jobList.filter((j) => j.status === 'RUNNING').length);
 
   onMount(async () => {
     backendOnline = await checkBackendHealth();
+    savedDomains = await fetchWatchlist();
     await handleRunScan({
       keywords: ['veltrix', 'nova'],
       tlds: ['com', 'ai', 'io', 'dev', 'co', 'app'],
@@ -32,7 +82,12 @@
       onlyAvailable: false,
       minScore: 0,
     });
+    jobList = await fetchJobQueue();
   });
+
+  async function refreshJobs() {
+    jobList = await fetchJobQueue();
+  }
 
   async function handleRunScan(opts: {
     keywords: string[];
@@ -57,6 +112,7 @@
     scanReport = report;
     backendOnline = liveBackend;
     scanLoading = false;
+    await refreshJobs();
   }
 
   async function handleInspectDomain(domain: string) {
@@ -68,6 +124,32 @@
     inquiryData = inquiry;
     backendOnline = liveBackend;
     inspectLoading = false;
+    await refreshJobs();
+  }
+
+  async function handleCheckHistory(domain: string) {
+    historyTarget = domain;
+    historyModalOpen = true;
+    historyLoading = true;
+    cliPreview = `scanner history ${domain}`;
+
+    const { history, liveBackend } = await runDomainHistory(domain);
+    historyReport = history;
+    backendOnline = liveBackend;
+    historyLoading = false;
+    await refreshJobs();
+  }
+
+  async function handleRunRecon(domain: string) {
+    activeMode = 'recon';
+    reconLoading = true;
+    cliPreview = `scanner recon ${domain}`;
+
+    const { recon, liveBackend } = await runPortRecon(domain);
+    reconReport = recon;
+    backendOnline = liveBackend;
+    reconLoading = false;
+    await refreshJobs();
   }
 
   async function handleCrawlDomain(target: string) {
@@ -83,6 +165,7 @@
     crawlReport = report;
     backendOnline = liveBackend;
     crawlLoading = false;
+    await refreshJobs();
   }
 
   async function handleRunCrawl(opts: { targetUrl: string; maxPages: number; maxDepth: number }) {
@@ -94,6 +177,73 @@
     crawlReport = report;
     backendOnline = liveBackend;
     crawlLoading = false;
+    await refreshJobs();
+  }
+
+  async function handleRunFullSuite(domain: string) {
+    jobQueueOpen = false;
+    reconLoading = true;
+    inspectLoading = true;
+    crawlLoading = true;
+    cliPreview = `scanner recon ${domain} && scanner history ${domain} && scanner inspect ${domain}`;
+
+    const { suite, liveBackend } = await runFullParallelSuite(domain);
+    inquiryData = suite.inquiry;
+    historyReport = suite.history;
+    reconReport = suite.recon;
+    crawlReport = suite.crawl;
+    backendOnline = liveBackend;
+
+    reconLoading = false;
+    inspectLoading = false;
+    crawlLoading = false;
+    activeMode = 'recon';
+    await refreshJobs();
+  }
+
+  async function handleToggleSave(domain: string, available: boolean) {
+    const clean = domain.toLowerCase().trim();
+    if (savedDomainsSet.has(clean)) {
+      savedDomains = await removeDomainFromVault(clean);
+    } else {
+      savedDomains = await saveDomainToVault({
+        domain: clean,
+        available,
+        notes: available ? 'High-value unclaimed domain candidate' : 'Active registered domain watch',
+        tags: available ? ['Unclaimed Gem'] : ['Watch'],
+      });
+    }
+  }
+
+  async function handleAddVaultDomain(domain: string, notes: string, tag: string) {
+    savedDomains = await saveDomainToVault({
+      domain,
+      notes,
+      tags: [tag],
+    });
+  }
+
+  async function handleRemoveVaultDomain(domain: string) {
+    savedDomains = await removeDomainFromVault(domain);
+  }
+
+  async function handleRecheckVault() {
+    recheckingVault = true;
+    savedDomains = await recheckWatchlistParallel();
+    recheckingVault = false;
+    await refreshJobs();
+  }
+
+  function handleSelectJob(job: Job) {
+    jobQueueOpen = false;
+    if (job.type === 'scan') activeMode = 'scan';
+    else if (job.type === 'inspect') activeMode = 'inspect';
+    else if (job.type === 'recon' || job.type === 'parallel_suite') activeMode = 'recon';
+    else if (job.type === 'crawl') activeMode = 'crawl';
+    else if (job.type === 'history') {
+      historyTarget = job.target;
+      historyModalOpen = true;
+    }
   }
 
   function copyCliCommand() {
@@ -107,9 +257,9 @@
 
 <div class="min-h-dvh flex flex-col pb-16">
   <!-- FLOATING PILL NAVIGATION -->
-  <div class="sticky top-4 z-40 px-4 sm:px-6">
+  <div class="sticky top-4 z-40 px-3 sm:px-6">
     <header
-      class="mx-auto max-w-5xl rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex items-center justify-between gap-2"
+      class="mx-auto max-w-6xl rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-wrap items-center justify-between gap-2"
     >
       <!-- Studio Mark -->
       <a
@@ -118,7 +268,7 @@
           e.preventDefault();
           activeMode = 'scan';
         }}
-        class="flex items-center gap-2.5 pl-2 pr-3 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors"
+        class="flex items-center gap-2 pl-2 pr-3 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors"
       >
         <span
           class="w-7 h-7 rounded-full bg-[#19231f] text-[#dffc78] flex items-center justify-center font-mono text-sm font-bold"
@@ -131,11 +281,14 @@
       </a>
 
       <!-- Mode Switcher Pills -->
-      <nav aria-label="Primary Studio Modes" class="flex items-center gap-1 bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15">
+      <nav
+        aria-label="Primary Studio Modes"
+        class="flex flex-wrap items-center gap-1 bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
+      >
         <button
           type="button"
           onclick={() => (activeMode = 'scan')}
-          class="px-3.5 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
           'scan'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -149,7 +302,7 @@
             activeMode = 'inspect';
             if (!inquiryData) handleInspectDomain('svelte.dev');
           }}
-          class="px-3.5 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
           'inspect'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -163,21 +316,68 @@
             activeMode = 'crawl';
             if (!crawlReport) handleCrawlDomain('svelte.dev');
           }}
-          class="px-3.5 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
           'crawl'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
         >
-          03. Site Cartography
+          03. Site Tree
+        </button>
+
+        <button
+          type="button"
+          onclick={() => {
+            activeMode = 'recon';
+            if (!reconReport) handleRunRecon('svelte.dev');
+          }}
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer {activeMode ===
+          'recon'
+            ? 'bg-[#19231f] text-[#fffdf8]'
+            : 'text-[#48534e] hover:text-[#19231f]'}"
+        >
+          04. Ports & TLS
+        </button>
+
+        <button
+          type="button"
+          onclick={() => (activeMode = 'vault')}
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer flex items-center gap-1.5 {activeMode ===
+          'vault'
+            ? 'bg-[#19231f] text-[#fffdf8]'
+            : 'text-[#48534e] hover:text-[#19231f]'}"
+        >
+          <span>05. Saved Vault</span>
+          <span
+            class="px-1.5 py-0.2 rounded-full text-[10px] font-mono {activeMode === 'vault'
+              ? 'bg-[#dffc78] text-[#19231f] font-bold'
+              : 'bg-[#d9d6fc] text-[#19231f]'}"
+          >
+            {savedDomains.length}
+          </span>
         </button>
       </nav>
 
-      <!-- Prominent Studio Editor / CLI Action CTA -->
+      <!-- Enterprise Queue & CLI CTA Buttons -->
       <div class="flex items-center gap-2">
         <button
           type="button"
+          onclick={async () => {
+            await refreshJobs();
+            jobQueueOpen = true;
+          }}
+          class="px-3.5 py-1.5 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:bg-[#c8c3fa] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer flex items-center gap-1.5"
+          title="Open Enterprise Job & Worker Queue"
+        >
+          <span>⚡ Queue ({jobList.length})</span>
+          {#if runningJobsCount > 0}
+            <span class="w-2 h-2 rounded-full bg-[#19231f] animate-ping"></span>
+          {/if}
+        </button>
+
+        <button
+          type="button"
           onclick={copyCliCommand}
-          class="studio-btn-primary px-4 py-1.5 text-xs cursor-pointer flex items-center gap-1.5"
+          class="studio-btn-primary px-4 py-1.5 text-xs cursor-pointer hidden sm:flex items-center gap-1.5"
           title="Copy active Go CLI command"
         >
           <span>{copiedCli ? '✓ CLI Copied' : 'Copy CLI Cmd'}</span>
@@ -199,8 +399,8 @@
           ></span>
           <span>
             {backendOnline
-              ? 'Go Engine Connected (:8080) · Live DNS & RDAP'
-              : 'Standalone Studio · Start `./bin/scanner serve` for live sockets'}
+              ? 'Go Parallel Engine Online (:8080) · RDAP + Wayback + Port/TLS Worker Pool'
+              : 'Standalone Studio · Run `./bin/scanner serve` for live sockets'}
           </span>
         </div>
 
@@ -209,8 +409,8 @@
         </h1>
 
         <p class="text-base text-[#48534e] max-w-2xl leading-relaxed">
-          An editorial domain intelligence workbench pairing a concurrent Go CLI with interactive valuation scoring,
-          authoritative ICANN RDAP registration chronology, and live site-tree cartography.
+          An editorial domain intelligence &amp; surface reconnaissance studio: parallel availability scoring,
+          Wayback &amp; CT past registration history, 14-port TCP/TLS inspection, and persistent domain vault.
         </p>
       </div>
 
@@ -237,8 +437,8 @@
         </div>
 
         <div class="flex items-center justify-between text-[11px] text-[#fffdf8]/70 font-mono">
-          <span>Binary: ./bin/scanner</span>
-          <span>API: http://localhost:8080</span>
+          <span>Workers: Concurrent Go Pool</span>
+          <span>Vault: {savedDomains.length} saved</span>
         </div>
       </div>
     </div>
@@ -252,14 +452,22 @@
         loading={scanLoading}
         onRunScan={handleRunScan}
         onInspectDomain={handleInspectDomain}
+        onCheckHistory={handleCheckHistory}
+        onRunRecon={handleRunRecon}
         onCrawlDomain={handleCrawlDomain}
+        onToggleSave={handleToggleSave}
+        {savedDomainsSet}
       />
     {:else if activeMode === 'inspect'}
       <DomainInspector
         inquiry={inquiryData}
         loading={inspectLoading}
         onInspect={handleInspectDomain}
+        onCheckHistory={handleCheckHistory}
+        onRunRecon={handleRunRecon}
         onCrawlDomain={handleCrawlDomain}
+        onToggleSave={handleToggleSave}
+        {savedDomainsSet}
       />
     {:else if activeMode === 'crawl'}
       <SiteCrawler
@@ -267,6 +475,27 @@
         loading={crawlLoading}
         onRunCrawl={handleRunCrawl}
         onInspectDomain={handleInspectDomain}
+      />
+    {:else if activeMode === 'recon'}
+      <PortReconStudio
+        report={reconReport}
+        loading={reconLoading}
+        onRunRecon={handleRunRecon}
+        onRunFullSuite={handleRunFullSuite}
+        onCheckHistory={handleCheckHistory}
+        onSaveDomain={handleToggleSave}
+        {savedDomainsSet}
+      />
+    {:else if activeMode === 'vault'}
+      <WatchlistVault
+        items={savedDomains}
+        rechecking={recheckingVault}
+        onAddDomain={handleAddVaultDomain}
+        onRemoveDomain={handleRemoveVaultDomain}
+        onRecheckAll={handleRecheckVault}
+        onInspectDomain={handleInspectDomain}
+        onCheckHistory={handleCheckHistory}
+        onRunRecon={handleRunRecon}
       />
     {/if}
 
@@ -280,45 +509,78 @@
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
-        <div class="md:col-span-5 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
+        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
           <div class="flex items-center justify-between">
-            <span class="studio-label">Default Mode · Bulk Discovery</span>
+            <span class="studio-label">01 · Bulk Value</span>
             <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#dffc78] border border-[#19231f]">
-              Valuation Engine
+              16 Workers
             </span>
           </div>
           <p class="text-xs text-[#48534e] leading-relaxed">
-            Scan seed words across multiple TLDs with automatic affix mutations and filter strictly for unclaimed domains.
+            Scan roots across TLDs with affix variations and filter for unclaimed gems.
           </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner veltrix nova --available --min-score 75</pre>
-        </div>
-
-        <div class="md:col-span-4 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
-          <div class="flex items-center justify-between">
-            <span class="studio-label">Mode 02 · RDAP Custody</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#d9d6fc] border border-[#19231f]">
-              WHOIS + DNS
-            </span>
-          </div>
-          <p class="text-xs text-[#48534e] leading-relaxed">
-            Query creation timestamps, domain age, registrar custody, and live NS/MX/TXT records.
-          </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner inspect svelte.dev</pre>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner veltrix --available</pre>
         </div>
 
         <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
           <div class="flex items-center justify-between">
-            <span class="studio-label">Mode 03 · Site Tree</span>
+            <span class="studio-label">02 · Past History</span>
             <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] border border-[#19231f]">
+              Wayback + CT
+            </span>
+          </div>
+          <p class="text-xs text-[#48534e] leading-relaxed">
+            Verify if an unclaimed domain was previously registered or hosted years ago.
+          </p>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner history svelte.dev</pre>
+        </div>
+
+        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
+          <div class="flex items-center justify-between">
+            <span class="studio-label">03 · Port & TLS Recon</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#d9d6fc] border border-[#19231f]">
+              28 Workers
+            </span>
+          </div>
+          <p class="text-xs text-[#48534e] leading-relaxed">
+            Probe 14 TCP ports in parallel, inspect TLS 1.3 SANs, and grade SPF/DMARC/HSTS.
+          </p>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner recon svelte.dev</pre>
+        </div>
+
+        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
+          <div class="flex items-center justify-between">
+            <span class="studio-label">04 · Site Tree</span>
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#dffc78] border border-[#19231f]">
               Crawler
             </span>
           </div>
           <p class="text-xs text-[#48534e] leading-relaxed">
-            Crawl internal routes and print a box-drawing site hierarchy in your terminal.
+            Crawl internal link graphs and render a box-drawing hierarchy in terminal.
           </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner crawl svelte.dev -p 20</pre>
+          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner crawl svelte.dev</pre>
         </div>
       </div>
     </section>
   </main>
+
+  <!-- PAST REGISTRATION HISTORY DOSSIER MODAL -->
+  <HistoryModal
+    open={historyModalOpen}
+    loading={historyLoading}
+    targetDomain={historyTarget}
+    report={historyReport}
+    onClose={() => (historyModalOpen = false)}
+    onInspectRDAP={handleInspectDomain}
+    onRunRecon={handleRunRecon}
+  />
+
+  <!-- ENTERPRISE JOB & WORKER QUEUE DRAWER -->
+  <JobQueueDrawer
+    open={jobQueueOpen}
+    jobs={jobList}
+    onClose={() => (jobQueueOpen = false)}
+    onSelectJob={handleSelectJob}
+    onDispatchParallelSuite={handleRunFullSuite}
+  />
 </div>
