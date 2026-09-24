@@ -9,6 +9,8 @@ import type {
   SavedDomain,
   Job,
   ParallelSuiteResult,
+  RobotsSitemapReport,
+  MetaSocialReport,
 } from './types';
 
 const API_BASE = 'http://localhost:8080';
@@ -138,6 +140,34 @@ export async function runSiteCrawl(params: {
     return { report, liveBackend: true };
   } catch {
     return { report: synthesizeCrawlReport(params.targetUrl), liveBackend: false };
+  }
+}
+
+export async function runRobotsSitemapCheck(
+  targetInput: string
+): Promise<{ report: RobotsSitemapReport; liveBackend: boolean }> {
+  const signal = createSignal();
+  try {
+    const res = await fetch(`${API_BASE}/api/robots?target=${encodeURIComponent(targetInput)}`, { signal });
+    if (!res.ok) throw new Error('Robots/Sitemap check failed');
+    const report: RobotsSitemapReport = await res.json();
+    return { report, liveBackend: true };
+  } catch {
+    return { report: synthesizeRobotsSitemapReport(targetInput), liveBackend: false };
+  }
+}
+
+export async function runMetaSocialCheck(
+  targetInput: string
+): Promise<{ report: MetaSocialReport; liveBackend: boolean }> {
+  const signal = createSignal();
+  try {
+    const res = await fetch(`${API_BASE}/api/meta?target=${encodeURIComponent(targetInput)}`, { signal });
+    if (!res.ok) throw new Error('Meta/Social check failed');
+    const report: MetaSocialReport = await res.json();
+    return { report, liveBackend: true };
+  } catch {
+    return { report: synthesizeMetaSocialReport(targetInput), liveBackend: false };
   }
 }
 
@@ -542,14 +572,39 @@ function synthesizeReconReport(raw: string): ReconReport {
       { control: 'DNS Sender Policy Framework (SPF)', passed: true, detail: 'Authorized outbound mail servers declared' },
       { control: 'DNS DMARC Anti-Spoofing Policy', passed: false, detail: 'No _dmarc record published' },
     ],
+    trackers: {
+      privacyGrade: 'A',
+      verdict: 'Minimal First-Party Analytics Only',
+      summary: 'Clean ad-free surface using 1 analytics tool (Cloudflare Web Analytics) with zero behavioral retargeting pixels.',
+      adNetworksCount: 0,
+      analyticsCount: 1,
+      pixelsCount: 0,
+      telemetryCount: 0,
+      totalDetected: 1,
+      detectedTrackers: [
+        {
+          name: 'Cloudflare Web Analytics',
+          category: 'ANALYTICS',
+          provider: 'Cloudflare',
+          matchedRule: 'static.cloudflareinsights.com/beacon.min.js',
+          riskLevel: 'LOW',
+          description: 'Privacy-first cookieless edge performance & visitor beacon',
+        },
+      ],
+    },
     durationMs: 310,
   };
 }
 
 function synthesizeCrawlReport(rawUrl: string): CrawlReport {
-  const host = rawUrl.replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
+  const clean = rawUrl.replace(/^https?:\/\//, '');
+  const parts = clean.split('/');
+  const host = parts[0] || 'svelte.dev';
+  const seedPath = parts.length > 1 && parts.slice(1).join('/') ? '/' + parts.slice(1).join('/') : '/';
+
   return {
-    rootUrl: `https://${host}`,
+    rootUrl: `https://${host}${seedPath}`,
+    seedPath,
     host,
     pagesCrawled: 6,
     totalLinks: 64,
@@ -557,7 +612,7 @@ function synthesizeCrawlReport(rawUrl: string): CrawlReport {
     techHeaders: ['Server: Cloudflare', 'Platform: Vercel Edge'],
     durationMs: 412,
     pages: [
-      { url: `https://${host}/`, path: '/', title: `${host} — Cybernetically Enhanced Web Apps`, h1: 'Build faster web platforms', statusCode: 200, contentType: 'text/html', latencyMs: 42, depth: 0, internalLinks: 18, externalLinks: 4 },
+      { url: `https://${host}${seedPath}`, path: seedPath, title: `${host}${seedPath} — Primary Route`, h1: `Section ${seedPath}`, statusCode: 200, contentType: 'text/html', latencyMs: 42, depth: 0, internalLinks: 18, externalLinks: 4 },
       { url: `https://${host}/docs`, path: '/docs', title: `Documentation — ${host}`, h1: 'Introduction & Quickstart', statusCode: 200, contentType: 'text/html', latencyMs: 55, depth: 1, internalLinks: 14, externalLinks: 2 },
       { url: `https://${host}/docs/cli`, path: '/docs/cli', title: `CLI Reference — ${host}`, h1: 'Command Line Interface', statusCode: 200, contentType: 'text/html', latencyMs: 49, depth: 2, internalLinks: 9, externalLinks: 1 },
       { url: `https://${host}/docs/api`, path: '/docs/api', title: `REST & RDAP API — ${host}`, h1: 'Endpoints & Schemas', statusCode: 200, contentType: 'text/html', latencyMs: 61, depth: 2, internalLinks: 8, externalLinks: 1 },
@@ -565,9 +620,9 @@ function synthesizeCrawlReport(rawUrl: string): CrawlReport {
       { url: `https://${host}/blog`, path: '/blog', title: `Engineering Blog — ${host}`, h1: 'Latest Releases & Architecture', statusCode: 200, contentType: 'text/html', latencyMs: 51, depth: 1, internalLinks: 9, externalLinks: 3 },
     ],
     tree: {
-      segment: host,
-      fullPath: '/',
-      title: `${host} — Home`,
+      segment: seedPath === '/' ? host : `${host}${seedPath}`,
+      fullPath: seedPath,
+      title: `${host}${seedPath}`,
       statusCode: 200,
       latencyMs: 42,
       internalOut: 18,
@@ -586,6 +641,118 @@ function synthesizeCrawlReport(rawUrl: string): CrawlReport {
         { segment: 'pricing', fullPath: '/pricing', title: 'Plans & Enterprise', statusCode: 200, latencyMs: 38 },
         { segment: 'blog', fullPath: '/blog', title: 'Engineering Blog', statusCode: 200, latencyMs: 51 },
       ],
+    },
+    trackers: {
+      privacyGrade: 'A',
+      verdict: 'Minimal First-Party Analytics Only',
+      summary: 'Clean ad-free surface using 1 analytics tool (Cloudflare Web Analytics).',
+      adNetworksCount: 0,
+      analyticsCount: 1,
+      pixelsCount: 0,
+      telemetryCount: 0,
+      totalDetected: 1,
+      detectedTrackers: [
+        {
+          name: 'Cloudflare Web Analytics',
+          category: 'ANALYTICS',
+          provider: 'Cloudflare',
+          matchedRule: 'static.cloudflareinsights.com/beacon.min.js',
+          riskLevel: 'LOW',
+          description: 'Privacy-first cookieless edge performance & visitor beacon',
+        },
+      ],
+    },
+  };
+}
+
+function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
+  const host = rawTarget.replace(/^https?:\/\//, '').split('/')[0] || 'supercoloring.com';
+  return {
+    targetUrl: `https://${host}`,
+    host,
+    checkedAt: new Date().toISOString(),
+    durationMs: 245,
+    robotsFound: true,
+    robotsUrl: `https://${host}/robots.txt`,
+    robotsStatus: 200,
+    robotsSizeBytes: 512,
+    totalDisallowCount: 4,
+    totalAllowCount: 2,
+    declaredSitemaps: [`https://${host}/sitemap.xml`],
+    agentGroups: [
+      { userAgent: '*', disallow: ['/admin/', '/api/private/', '/checkout/'], allow: ['/'] },
+      { userAgent: 'GPTBot', disallow: ['/'], allow: [] },
+    ],
+    botMatrix: [
+      { botName: 'Googlebot', category: 'SEARCH_ENGINE', status: 'PARTIAL', matchedRule: 'User-agent: * → Disallow: /admin/ (+2 paths)' },
+      { botName: 'Bingbot', category: 'SEARCH_ENGINE', status: 'PARTIAL', matchedRule: 'User-agent: * → Disallow: /admin/ (+2 paths)' },
+      { botName: 'GPTBot (OpenAI)', category: 'AI_LLM', status: 'BLOCKED', matchedRule: 'User-agent: GPTBot → Disallow: /' },
+      { botName: 'ClaudeBot (Anthropic)', category: 'AI_LLM', status: 'PARTIAL', matchedRule: 'User-agent: * → Disallow: /admin/' },
+      { botName: 'Twitterbot (X Card)', category: 'SOCIAL_PREVIEW', status: 'ALLOWED', matchedRule: 'Allowed (Card previews permitted)' },
+      { botName: 'facebookexternalhit', category: 'SOCIAL_PREVIEW', status: 'ALLOWED', matchedRule: 'Allowed (OpenGraph previews permitted)' },
+    ],
+    rawRobotsPreview: `User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /api/private/\n\nUser-agent: GPTBot\nDisallow: /\n\nSitemap: https://${host}/sitemap.xml`,
+    sitemapFound: true,
+    sitemapUrl: `https://${host}/sitemap.xml`,
+    sitemapStatus: 200,
+    isSitemapIndex: false,
+    totalUrlsCount: 4,
+    newestLastMod: '2026-09-20',
+    oldestLastMod: '2025-11-04',
+    updatedLast7Days: 2,
+    updatedLast30Days: 3,
+    updatedLastYear: 4,
+    entries: [
+      { loc: `https://${host}/`, path: '/', lastMod: '2026-09-20', ageLabel: '5d ago', changeFreq: 'daily', priority: '1.0' },
+      { loc: `https://${host}/docs`, path: '/docs', lastMod: '2026-09-18', ageLabel: '7d ago', changeFreq: 'weekly', priority: '0.9' },
+      { loc: `https://${host}/pricing`, path: '/pricing', lastMod: '2026-09-01', ageLabel: '24d ago', changeFreq: 'monthly', priority: '0.8' },
+      { loc: `https://${host}/blog`, path: '/blog', lastMod: '2025-11-04', ageLabel: '10mo ago', changeFreq: 'weekly', priority: '0.7' },
+    ],
+  };
+}
+
+function synthesizeMetaSocialReport(rawTarget: string): MetaSocialReport {
+  const clean = rawTarget.replace(/^https?:\/\//, '');
+  const host = clean.split('/')[0] || 'supercoloring.com';
+  return {
+    targetUrl: `https://${clean}`,
+    finalUrl: `https://${clean}`,
+    host,
+    statusCode: 200,
+    durationMs: 280,
+    checkedAt: new Date().toISOString(),
+    title: `${host} — Interactive Platform & Digital Studio`,
+    description: `Explore ${clean} — curated tools, documentation, and interactive digital experiences.`,
+    canonicalUrl: `https://${clean}`,
+    faviconUrl: `https://${host}/favicon.ico`,
+    themeColor: '#5366e8',
+    ogTitle: `${host} — Interactive Platform & Digital Studio`,
+    ogDescription: `Explore ${clean} — curated tools, documentation, and interactive digital experiences.`,
+    ogSiteName: host,
+    ogType: 'website',
+    twitterCard: 'summary_large_image',
+    resolvedTitle: `${host} — Interactive Platform & Digital Studio`,
+    resolvedDescription: `Explore ${clean} — curated tools, documentation, and interactive digital experiences.`,
+    resolvedSiteName: host,
+    resolvedThemeColor: '#5366e8',
+    socialScore: 80,
+    socialGrade: 'A',
+    auditChecks: [
+      { id: 'title', label: 'HTML <title> Tag', status: 'PASS', details: '48 chars (Optimal 15–70 chars)' },
+      { id: 'desc', label: 'Meta Description', status: 'PASS', details: '92 chars (Optimal 50–160 chars)' },
+      { id: 'og_text', label: 'OpenGraph Title & Description', status: 'PASS', details: 'Configured for Discord/Telegram/WhatsApp' },
+      { id: 'twitter_card', label: 'Twitter / Discord Card Mode', status: 'PASS', details: 'twitter:card = summary_large_image' },
+    ],
+    trackers: {
+      privacyGrade: 'A',
+      verdict: 'Minimal First-Party Analytics Only',
+      summary: 'Clean ad-free surface using 1 analytics tool.',
+      adNetworksCount: 0,
+      analyticsCount: 1,
+      pixelsCount: 0,
+      telemetryCount: 0,
+      totalDetected: 1,
+      detectedTrackers: [],
     },
   };
 }

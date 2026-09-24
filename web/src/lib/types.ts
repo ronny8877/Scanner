@@ -120,6 +120,130 @@ export interface HistoryReport {
   checkLatencyMs: number;
 }
 
+export interface DetectedTracker {
+  name: string;
+  category: 'AD_NETWORK' | 'ANALYTICS' | 'PIXEL_TRACKER' | 'SDK_TELEMETRY' | string;
+  provider: string;
+  matchedRule: string;
+  riskLevel: 'LOW' | 'MODERATE' | 'HIGH' | string;
+  description: string;
+}
+
+export interface TrackerTelemetry {
+  privacyGrade: string;
+  verdict: string;
+  summary: string;
+  adNetworksCount: number;
+  analyticsCount: number;
+  pixelsCount: number;
+  telemetryCount: number;
+  totalDetected: number;
+  detectedTrackers?: DetectedTracker[];
+}
+
+export interface CrawlerPermission {
+  botName: string;
+  category: string;
+  status: 'ALLOWED' | 'PARTIAL' | 'BLOCKED' | string;
+  matchedRule: string;
+}
+
+export interface RobotsAgentGroup {
+  userAgent: string;
+  disallow: string[];
+  allow: string[];
+  crawlDelay?: string;
+}
+
+export interface SitemapEntry {
+  loc: string;
+  path: string;
+  lastMod?: string;
+  ageLabel?: string;
+  changeFreq?: string;
+  priority?: string;
+  isChildMap?: boolean;
+}
+
+export interface RobotsSitemapReport {
+  targetUrl: string;
+  host: string;
+  checkedAt: string;
+  durationMs: number;
+  robotsFound: boolean;
+  robotsUrl: string;
+  robotsStatus: number;
+  robotsSizeBytes: number;
+  totalDisallowCount: number;
+  totalAllowCount: number;
+  declaredSitemaps?: string[];
+  agentGroups?: RobotsAgentGroup[];
+  botMatrix: CrawlerPermission[];
+  rawRobotsPreview?: string;
+  sitemapFound: boolean;
+  sitemapUrl?: string;
+  sitemapStatus?: number;
+  isSitemapIndex?: boolean;
+  childSitemaps?: SitemapEntry[];
+  totalUrlsCount: number;
+  newestLastMod?: string;
+  oldestLastMod?: string;
+  updatedLast7Days: number;
+  updatedLast30Days: number;
+  updatedLastYear: number;
+  entries?: SitemapEntry[];
+}
+
+export interface MetaAuditCheck {
+  id: string;
+  label: string;
+  status: 'PASS' | 'WARN' | 'MISSING' | string;
+  details: string;
+}
+
+export interface MetaSocialReport {
+  targetUrl: string;
+  finalUrl: string;
+  host: string;
+  statusCode: number;
+  durationMs: number;
+  checkedAt: string;
+  title: string;
+  description: string;
+  canonicalUrl?: string;
+  faviconUrl?: string;
+  themeColor?: string;
+  robotsMeta?: string;
+  author?: string;
+  generator?: string;
+  language?: string;
+  charset?: string;
+  viewport?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  ogUrl?: string;
+  ogSiteName?: string;
+  ogType?: string;
+  ogLocale?: string;
+  twitterCard?: string;
+  twitterTitle?: string;
+  twitterDescription?: string;
+  twitterImage?: string;
+  twitterSite?: string;
+  twitterCreator?: string;
+  resolvedTitle: string;
+  resolvedDescription: string;
+  resolvedImage?: string;
+  resolvedSiteName: string;
+  resolvedThemeColor: string;
+  socialScore: number;
+  socialGrade: string;
+  auditChecks: MetaAuditCheck[];
+  allMetaTags?: Record<string, string>;
+  trackers: TrackerTelemetry;
+}
+
 export interface PortProbe {
   port: number;
   service: string;
@@ -173,6 +297,7 @@ export interface ReconReport {
   securityGrade: string;
   securityScore: number;
   securityChecks: SecurityCheck[];
+  trackers?: TrackerTelemetry;
   durationMs: number;
 }
 
@@ -204,6 +329,7 @@ export interface SiteNode {
 
 export interface CrawlReport {
   rootUrl: string;
+  seedPath?: string;
   host: string;
   pagesCrawled: number;
   totalLinks: number;
@@ -212,6 +338,7 @@ export interface CrawlReport {
   durationMs: number;
   pages: PageInfo[];
   tree: SiteNode;
+  trackers?: TrackerTelemetry;
 }
 
 export interface SavedDomain {
@@ -229,10 +356,10 @@ export interface SavedDomain {
 
 export interface Job {
   id: string;
-  type: 'scan' | 'inspect' | 'history' | 'recon' | 'crawl' | 'parallel_suite' | 'watchlist_recheck' | string;
+  type: 'scan' | 'inspect' | 'history' | 'recon' | 'crawl' | 'robots' | 'meta' | 'parallel_suite' | 'watchlist_recheck' | string;
   title: string;
   target: string;
-  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELED' | 'FAILED';
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'CANCELED' | 'CANCELLED' | 'FAILED';
   progress: number;
   phase: string;
   workers: number;

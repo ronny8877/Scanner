@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rny/scanner/internal/webintel"
 )
 
 // CrawlOptions configures a website structure crawl.
@@ -47,17 +49,19 @@ type SiteNode struct {
 	Children    []*SiteNode `json:"children,omitempty"`
 }
 
-// CrawlReport contains the complete crawl summary, flat pages list, and hierarchical tree structure.
+// CrawlReport contains the complete crawl summary, flat pages list, hierarchical tree structure, and tracker telemetry.
 type CrawlReport struct {
-	RootURL       string     `json:"rootUrl"`
-	Host          string     `json:"host"`
-	PagesCrawled  int        `json:"pagesCrawled"`
-	TotalLinks    int        `json:"totalLinks"`
-	ExternalCount int        `json:"externalCount"`
-	TechHeaders   []string   `json:"techHeaders,omitempty"`
-	DurationMs    int64      `json:"durationMs"`
-	Pages         []PageInfo `json:"pages"`
-	Tree          *SiteNode  `json:"tree"`
+	RootURL       string                    `json:"rootUrl"`
+	SeedPath      string                    `json:"seedPath"`
+	Host          string                    `json:"host"`
+	PagesCrawled  int                       `json:"pagesCrawled"`
+	TotalLinks    int                       `json:"totalLinks"`
+	ExternalCount int                       `json:"externalCount"`
+	TechHeaders   []string                  `json:"techHeaders,omitempty"`
+	DurationMs    int64                     `json:"durationMs"`
+	Pages         []PageInfo                `json:"pages"`
+	Tree          *SiteNode                 `json:"tree"`
+	Trackers      webintel.TrackerTelemetry `json:"trackers"`
 }
 
 var (
@@ -68,14 +72,20 @@ var (
 	reTags  = regexp.MustCompile(`<[^>]*>`)
 )
 
-// CrawlSite crawls a domain/website and builds its hierarchical structure tree.
+// CrawlSite crawls a domain or specific sub-URL (e.g. bemee.in/@nyx) and builds its hierarchical structure tree.
 func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 	start := time.Now()
 	if opts.MaxPages <= 0 {
 		opts.MaxPages = 25
 	}
+	if opts.MaxPages > 300 {
+		opts.MaxPages = 300
+	}
 	if opts.MaxDepth <= 0 {
 		opts.MaxDepth = 3
+	}
+	if opts.MaxDepth > 8 {
+		opts.MaxDepth = 8
 	}
 
 	rawTarget := strings.TrimSpace(opts.TargetURL)
@@ -85,10 +95,26 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 
 	parsedRoot, err := url.Parse(rawTarget)
 	if err != nil || parsedRoot.Host == "" {
-		return CrawlReport{RootURL: rawTarget}
+		return CrawlReport{RootURL: rawTarget, SeedPath: "/"}
 	}
 	rootHost := strings.ToLower(parsedRoot.Host)
 	baseRoot := parsedRoot.Scheme + "://" + parsedRoot.Host
+
+	seedPath := parsedRoot.Path
+	if seedPath == "" {
+		seedPath = "/"
+	}
+	if !strings.HasPrefix(seedPath, "/") {
+		seedPath = "/" + seedPath
+	}
+	if len(seedPath) > 1 {
+		seedPath = strings.TrimSuffix(seedPath, "/")
+	}
+
+	seedFullURL := baseRoot + seedPath
+	if parsedRoot.RawQuery != "" {
+		seedFullURL += "?" + parsedRoot.RawQuery
+	}
 
 	type queueItem struct {
 		fullURL string
@@ -99,20 +125,28 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 	visited := make(map[string]bool)
 	var mu sync.Mutex
 	var pages []PageInfo
+	var htmlSamples []string
+	var firstHeader http.Header
 	techSet := make(map[string]bool)
 	totalInternal := 0
 	totalExternal := 0
 
-	queue := []queueItem{{fullURL: baseRoot + "/", path: "/", depth: 0}}
-	visited["/"] = true
+	// Start directly from the exact requested URL/path (e.g. /@nyx)
+	queue := []queueItem{{fullURL: seedFullURL, path: seedPath, depth: 0}}
+	visited[seedPath] = true
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
 	for len(queue) > 0 && len(pages) < opts.MaxPages {
-		// Process up to 5 URLs in parallel per wave
-		batchSize := 5
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+
+		batchSize := 6
 		if len(queue) < batchSize {
 			batchSize = len(queue)
 		}
@@ -120,7 +154,8 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 		queue = queue[batchSize:]
 
 		var wg sync.WaitGroup
-		var nextWave []queueItem
+		var nextWavePriority []queueItem
+		var nextWaveGeneral []queueItem
 
 		for _, item := range batch {
 			if len(pages) >= opts.MaxPages {
@@ -129,7 +164,7 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 			wg.Add(1)
 			go func(qi queueItem) {
 				defer wg.Done()
-				page, discoveredPaths, headers := fetchAndParsePage(ctx, client, qi.fullURL, qi.path, qi.depth, rootHost, baseRoot)
+				page, discoveredPaths, headers, rawHTML, respHdr := fetchAndParsePage(ctx, client, qi.fullURL, qi.path, qi.depth, rootHost, baseRoot)
 
 				mu.Lock()
 				defer mu.Unlock()
@@ -137,6 +172,12 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 					return
 				}
 				pages = append(pages, page)
+				if len(htmlSamples) < 8 && rawHTML != "" {
+					htmlSamples = append(htmlSamples, rawHTML)
+				}
+				if firstHeader == nil && respHdr != nil {
+					firstHeader = respHdr
+				}
 				totalInternal += page.InternalLinks
 				totalExternal += page.ExternalLinks
 				for _, h := range headers {
@@ -145,24 +186,37 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 
 				if qi.depth < opts.MaxDepth {
 					for _, dp := range discoveredPaths {
-						if !visited[dp] && len(visited) < opts.MaxPages*2 {
+						if !visited[dp] && len(visited) < opts.MaxPages*3 {
 							visited[dp] = true
-							nextWave = append(nextWave, queueItem{
+							nextItem := queueItem{
 								fullURL: baseRoot + dp,
 								path:    dp,
 								depth:   qi.depth + 1,
-							})
+							}
+							// Prioritize sub-routes under the user's starting path (e.g. /@nyx/*)
+							if seedPath != "/" && strings.HasPrefix(dp, seedPath) {
+								nextWavePriority = append(nextWavePriority, nextItem)
+							} else {
+								nextWaveGeneral = append(nextWaveGeneral, nextItem)
+							}
 						}
 					}
 				}
 			}(item)
 		}
 		wg.Wait()
-		queue = append(queue, nextWave...)
+		queue = append(queue, nextWavePriority...)
+		queue = append(queue, nextWaveGeneral...)
 	}
 
-	// Sort pages by path depth then alphabetically
+	// Sort pages so depth 0 (seedPath) is first, then by depth & path
 	sort.Slice(pages, func(i, j int) bool {
+		if pages[i].Path == seedPath {
+			return true
+		}
+		if pages[j].Path == seedPath {
+			return false
+		}
 		if pages[i].Depth != pages[j].Depth {
 			return pages[i].Depth < pages[j].Depth
 		}
@@ -175,10 +229,12 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 	}
 	sort.Strings(techHeaders)
 
-	tree := buildSiteTree(rootHost, pages)
+	tree := buildSiteTree(rootHost, seedPath, pages)
+	trackers := webintel.DetectTrackersFromHTML(htmlSamples, firstHeader)
 
 	return CrawlReport{
-		RootURL:       baseRoot,
+		RootURL:       seedFullURL,
+		SeedPath:      seedPath,
 		Host:          rootHost,
 		PagesCrawled:  len(pages),
 		TotalLinks:    totalInternal,
@@ -187,6 +243,7 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 		DurationMs:    time.Since(start).Milliseconds(),
 		Pages:         pages,
 		Tree:          tree,
+		Trackers:      trackers,
 	}
 }
 
@@ -196,7 +253,7 @@ func fetchAndParsePage(
 	targetURL, relPath string,
 	depth int,
 	rootHost, baseRoot string,
-) (PageInfo, []string, []string) {
+) (PageInfo, []string, []string, string, http.Header) {
 	start := time.Now()
 	info := PageInfo{
 		URL:   targetURL,
@@ -204,20 +261,20 @@ func fetchAndParsePage(
 		Depth: depth,
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, 4800*time.Millisecond)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return info, nil, nil
+		return info, nil, nil, "", nil
 	}
-	req.Header.Set("User-Agent", "Scanner-Site-Structure-Bot/1.0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Scanner-Site-Structure-Bot/2.0)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 
 	resp, err := client.Do(req)
 	if err != nil {
 		info.LatencyMs = time.Since(start).Milliseconds()
-		return info, nil, nil
+		return info, nil, nil, "", nil
 	}
 	defer resp.Body.Close()
 
@@ -239,9 +296,9 @@ func fetchAndParsePage(
 		headers = append(headers, "Platform: Vercel")
 	}
 
-	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 300*1024))
 	if err != nil {
-		return info, nil, headers
+		return info, nil, headers, "", resp.Header
 	}
 	html := string(bodyBytes)
 
@@ -255,6 +312,7 @@ func fetchAndParsePage(
 		info.Description = cleanText(m[1])
 	}
 
+	basePageURL, _ := url.Parse(targetURL)
 	matches := reHref.FindAllStringSubmatch(html, -1)
 	seenPaths := make(map[string]bool)
 	var discovered []string
@@ -271,6 +329,9 @@ func fetchAndParsePage(
 		u, err := url.Parse(href)
 		if err != nil {
 			continue
+		}
+		if basePageURL != nil {
+			u = basePageURL.ResolveReference(u)
 		}
 
 		if u.Host != "" && strings.ToLower(u.Host) != rootHost && strings.ToLower(u.Host) != "www."+rootHost && "www."+strings.ToLower(u.Host) != rootHost {
@@ -289,11 +350,10 @@ func fetchAndParsePage(
 			cleanPath = strings.TrimSuffix(cleanPath, "/")
 		}
 
-		// Skip static binary extensions
 		lowerP := strings.ToLower(cleanPath)
 		if strings.HasSuffix(lowerP, ".png") || strings.HasSuffix(lowerP, ".jpg") || strings.HasSuffix(lowerP, ".svg") ||
 			strings.HasSuffix(lowerP, ".css") || strings.HasSuffix(lowerP, ".js") || strings.HasSuffix(lowerP, ".pdf") ||
-			strings.HasSuffix(lowerP, ".xml") || strings.HasSuffix(lowerP, ".ico") {
+			strings.HasSuffix(lowerP, ".xml") || strings.HasSuffix(lowerP, ".ico") || strings.HasSuffix(lowerP, ".webp") {
 			continue
 		}
 
@@ -305,20 +365,24 @@ func fetchAndParsePage(
 	}
 
 	info.ChildrenPaths = discovered
-	return info, discovered, headers
+	return info, discovered, headers, html, resp.Header
 }
 
-func buildSiteTree(host string, pages []PageInfo) *SiteNode {
+func buildSiteTree(host, seedPath string, pages []PageInfo) *SiteNode {
+	rootSegment := host
+	if seedPath != "" && seedPath != "/" {
+		rootSegment = host + seedPath
+	}
 	root := &SiteNode{
-		Segment:    host,
-		FullPath:   "/",
+		Segment:    rootSegment,
+		FullPath:   seedPath,
 		StatusCode: 200,
 	}
 
 	pageByPath := make(map[string]PageInfo)
 	for _, p := range pages {
 		pageByPath[p.Path] = p
-		if p.Path == "/" {
+		if p.Path == seedPath || (seedPath == "/" && p.Path == "/") {
 			root.Title = p.Title
 			root.StatusCode = p.StatusCode
 			root.LatencyMs = p.LatencyMs
@@ -327,12 +391,11 @@ func buildSiteTree(host string, pages []PageInfo) *SiteNode {
 		}
 	}
 
-	// Ensure all crawled paths & their discovered internal routes are represented in the tree
 	allPaths := make(map[string]bool)
 	for _, p := range pages {
 		allPaths[p.Path] = true
 		for _, child := range p.ChildrenPaths {
-			if len(allPaths) < 60 {
+			if len(allPaths) < 90 {
 				allPaths[child] = true
 			}
 		}
@@ -340,16 +403,24 @@ func buildSiteTree(host string, pages []PageInfo) *SiteNode {
 
 	var sortedPaths []string
 	for k := range allPaths {
-		if k != "/" {
+		if k != "/" && k != seedPath {
 			sortedPaths = append(sortedPaths, k)
 		}
 	}
 	sort.Strings(sortedPaths)
 
 	for _, pathStr := range sortedPaths {
-		segments := strings.Split(strings.Trim(pathStr, "/"), "/")
+		// If pathStr is under seedPath (e.g. /@nyx/gallery under /@nyx), attach relative to root
+		relTrim := strings.Trim(pathStr, "/")
+		if seedPath != "/" && strings.HasPrefix(pathStr, seedPath+"/") {
+			relTrim = strings.TrimPrefix(pathStr, seedPath+"/")
+		}
+		segments := strings.Split(relTrim, "/")
 		curr := root
 		accumPath := ""
+		if seedPath != "/" && strings.HasPrefix(pathStr, seedPath+"/") {
+			accumPath = seedPath
+		}
 		for _, seg := range segments {
 			if seg == "" {
 				continue

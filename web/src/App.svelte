@@ -4,6 +4,8 @@
   import DomainInspector from './lib/components/DomainInspector.svelte';
   import SiteCrawler from './lib/components/SiteCrawler.svelte';
   import PortReconStudio from './lib/components/PortReconStudio.svelte';
+  import RobotsSitemapStudio from './lib/components/RobotsSitemapStudio.svelte';
+  import SocialMetaStudio from './lib/components/SocialMetaStudio.svelte';
   import WatchlistVault from './lib/components/WatchlistVault.svelte';
   import HistoryModal from './lib/components/HistoryModal.svelte';
   import JobQueueDrawer from './lib/components/JobQueueDrawer.svelte';
@@ -14,6 +16,8 @@
     runDomainHistory,
     runPortRecon,
     runSiteCrawl,
+    runRobotsSitemapCheck,
+    runMetaSocialCheck,
     runFullParallelSuite,
     fetchJobQueue,
     cancelRunningJob,
@@ -28,15 +32,18 @@
     CrawlReport,
     HistoryReport,
     ReconReport,
+    RobotsSitemapReport,
+    MetaSocialReport,
     SavedDomain,
     Job,
   } from './lib/types';
 
-  type Mode = 'scan' | 'inspect' | 'crawl' | 'recon' | 'vault';
+  type Mode = 'scan' | 'inspect' | 'crawl' | 'recon' | 'robots' | 'meta' | 'vault';
 
   let activeMode = $state<Mode>('scan');
   let backendOnline = $state<boolean>(false);
   let copiedCli = $state<boolean>(false);
+  let copiedGuideIndex = $state<number | null>(null);
 
   // Mode 1: Bulk Availability & Dictionary Scan
   let scanReport = $state<ScanReport | null>(null);
@@ -54,7 +61,15 @@
   let reconReport = $state<ReconReport | null>(null);
   let reconLoading = $state<boolean>(false);
 
-  // Mode 5: Saved Watchlist Vault
+  // Mode 5: Robots.txt & Sitemap.xml Governance
+  let robotsReport = $state<RobotsSitemapReport | null>(null);
+  let robotsLoading = $state<boolean>(false);
+
+  // Mode 6: Social Meta Cards & Ad/Tracker Radar
+  let metaReport = $state<MetaSocialReport | null>(null);
+  let metaLoading = $state<boolean>(false);
+
+  // Mode 7: Saved Watchlist Vault
   let savedDomains = $state<SavedDomain[]>([]);
   let recheckingVault = $state<boolean>(false);
 
@@ -70,10 +85,48 @@
 
   let cliPreview = $state<string>('scanner scan veltrix nova --tlds com,ai,io,dev,co,app,xyz,sh --mutations');
 
+  const terminalGuides = [
+    {
+      label: '01 · Dictionary Scan',
+      badge: '24 TLDs',
+      badgeBg: 'bg-[#dffc78]',
+      desc: 'Scan curated dictionary packs across 24 TLDs with calibrated registrar & flip pricing.',
+      cmd: './bin/scanner veltrix --available --tlds com,ai,io,dev',
+    },
+    {
+      label: '02 · Past History',
+      badge: 'Wayback + RDAP',
+      badgeBg: 'bg-[#ffc3a5]',
+      desc: 'Inspect Wayback yearly snapshots, RDAP creation date, and historical TLS logs.',
+      cmd: './bin/scanner history supercoloring.com',
+    },
+    {
+      label: '03 · Sub-URL Site Tree',
+      badge: 'Path Crawler',
+      badgeBg: 'bg-[#dffc78]',
+      desc: 'Crawl starting from a specific profile or route (e.g. bemee.in/@nyx) and map its tree.',
+      cmd: './bin/scanner crawl bemee.in/@nyx --pages 20 --depth 2',
+    },
+    {
+      label: '04 · Port & Ad Radar',
+      badge: '28 Workers',
+      badgeBg: 'bg-[#d9d6fc]',
+      desc: 'Probe 14 TCP ports, TLS SANs, HTTP headers, and detect Ad Networks & Analytics.',
+      cmd: './bin/scanner recon supercoloring.com',
+    },
+  ];
+
   const savedDomainsSet = $derived(new Set(savedDomains.map((d) => d.domain.toLowerCase())));
   const runningJobsCount = $derived(jobList.filter((j) => j.status === 'RUNNING').length);
   const anyJobRunning = $derived(
-    scanLoading || inspectLoading || crawlLoading || reconLoading || historyLoading || runningJobsCount > 0
+    scanLoading ||
+      inspectLoading ||
+      crawlLoading ||
+      reconLoading ||
+      robotsLoading ||
+      metaLoading ||
+      historyLoading ||
+      runningJobsCount > 0
   );
 
   onMount(async () => {
@@ -100,6 +153,8 @@
     inspectLoading = false;
     crawlLoading = false;
     reconLoading = false;
+    robotsLoading = false;
+    metaLoading = false;
     historyLoading = false;
   }
 
@@ -197,6 +252,30 @@
     await refreshJobs();
   }
 
+  async function handleRunRobotsCheck(target: string) {
+    activeMode = 'robots';
+    robotsLoading = true;
+    cliPreview = `scanner robots ${target}`;
+
+    const { report, liveBackend } = await runRobotsSitemapCheck(target);
+    robotsReport = report;
+    backendOnline = liveBackend;
+    robotsLoading = false;
+    await refreshJobs();
+  }
+
+  async function handleRunMetaCheck(targetUrl: string) {
+    activeMode = 'meta';
+    metaLoading = true;
+    cliPreview = `scanner meta ${targetUrl}`;
+
+    const { report, liveBackend } = await runMetaSocialCheck(targetUrl);
+    metaReport = report;
+    backendOnline = liveBackend;
+    metaLoading = false;
+    await refreshJobs();
+  }
+
   async function handleRunFullSuite(domain: string) {
     jobQueueOpen = false;
     reconLoading = true;
@@ -257,6 +336,8 @@
     else if (job.type === 'inspect') activeMode = 'inspect';
     else if (job.type === 'recon' || job.type === 'parallel_suite') activeMode = 'recon';
     else if (job.type === 'crawl') activeMode = 'crawl';
+    else if (job.type === 'robots') activeMode = 'robots';
+    else if (job.type === 'meta') activeMode = 'meta';
     else if (job.type === 'history') {
       historyTarget = job.target;
       historyModalOpen = true;
@@ -264,23 +345,30 @@
   }
 
   function copyCliCommand() {
-    navigator.clipboard?.writeText(cliPreview);
+    navigator.clipboard?.writeText(`./bin/${cliPreview}`);
     copiedCli = true;
     setTimeout(() => {
       copiedCli = false;
     }, 1800);
   }
+
+  function copyGuideCommand(cmd: string, idx: number) {
+    navigator.clipboard?.writeText(cmd);
+    copiedGuideIndex = idx;
+    setTimeout(() => {
+      if (copiedGuideIndex === idx) copiedGuideIndex = null;
+    }, 1800);
+  }
 </script>
 
 <div class="min-h-dvh flex flex-col pb-16">
-  <!-- RESPONSIVE FLOATING NAVIGATION (Clean 2-row card on mobile, floating pill on desktop) -->
+  <!-- RESPONSIVE FLOATING NAVIGATION -->
   <div class="sticky top-3 z-40 px-3 sm:px-6">
     <header
-      class="mx-auto max-w-6xl rounded-2xl lg:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2.5 lg:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5"
+      class="mx-auto max-w-7xl rounded-2xl xl:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2.5 xl:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2.5"
     >
-      <!-- Top Row on Mobile / Left+Right on Desktop -->
+      <!-- Brand + Mobile Actions -->
       <div class="flex items-center justify-between gap-2">
-        <!-- Studio Mark -->
         <a
           href="#top"
           onclick={(e) => {
@@ -299,8 +387,8 @@
           </span>
         </a>
 
-        <!-- Mobile Right Actions (Queue + Cancel) -->
-        <div class="flex lg:hidden items-center gap-1.5">
+        <!-- Mobile/Tablet Right Actions -->
+        <div class="flex xl:hidden items-center gap-1.5">
           {#if anyJobRunning}
             <button
               type="button"
@@ -327,10 +415,10 @@
         </div>
       </div>
 
-      <!-- Mode Switcher Pills: Single-row horizontal scroll on mobile so it NEVER wraps into a tall oval -->
+      <!-- Single-Row Horizontally Scrollable Mode Strip -->
       <nav
         aria-label="Primary Studio Modes"
-        class="w-full lg:w-auto flex items-center gap-1 overflow-x-auto whitespace-nowrap bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
+        class="w-full xl:w-auto flex items-center gap-1 overflow-x-auto whitespace-nowrap bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
       >
         <button
           type="button"
@@ -361,7 +449,7 @@
           type="button"
           onclick={() => {
             activeMode = 'crawl';
-            if (!crawlReport) handleCrawlDomain('svelte.dev');
+            if (!crawlReport) handleCrawlDomain('bemee.in/@nyx');
           }}
           class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'crawl'
@@ -387,13 +475,41 @@
 
         <button
           type="button"
+          onclick={() => {
+            activeMode = 'robots';
+            if (!robotsReport) handleRunRobotsCheck('supercoloring.com');
+          }}
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          'robots'
+            ? 'bg-[#19231f] text-[#fffdf8]'
+            : 'text-[#48534e] hover:text-[#19231f]'}"
+        >
+          05. Robots & Sitemap
+        </button>
+
+        <button
+          type="button"
+          onclick={() => {
+            activeMode = 'meta';
+            if (!metaReport) handleRunMetaCheck('bemee.in/@nyx');
+          }}
+          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          'meta'
+            ? 'bg-[#19231f] text-[#fffdf8]'
+            : 'text-[#48534e] hover:text-[#19231f]'}"
+        >
+          06. Social Meta & Ads
+        </button>
+
+        <button
+          type="button"
           onclick={() => (activeMode = 'vault')}
           class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 {activeMode ===
           'vault'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
         >
-          <span>05. Saved Vault</span>
+          <span>07. Vault</span>
           <span
             class="px-1.5 py-0.2 rounded-full text-[10px] font-mono {activeMode === 'vault'
               ? 'bg-[#dffc78] text-[#19231f] font-bold'
@@ -404,8 +520,8 @@
         </button>
       </nav>
 
-      <!-- Desktop Right Actions: Queue + Cancel Job + CLI CTA -->
-      <div class="hidden lg:flex items-center gap-2 shrink-0">
+      <!-- Desktop Right Actions -->
+      <div class="hidden xl:flex items-center gap-2 shrink-0">
         {#if anyJobRunning}
           <button
             type="button"
@@ -449,15 +565,16 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-end">
       <!-- 7-Col Editorial Title & Context -->
       <div class="lg:col-span-7 space-y-3">
-        <div class="inline-flex flex-wrap items-center gap-2 px-3 py-1 rounded-full bg-[#fffdf8] border border-[#19231f]/20 text-xs font-mono">
+        <!-- Fixed Single-Line Status Pill: dot + text are ALWAYS on the same line -->
+        <div class="inline-flex items-center gap-2.5 max-w-full px-3.5 py-1.5 rounded-full bg-[#fffdf8] border border-[#19231f]/20 text-xs font-mono">
           <span
-            class="w-2 h-2 rounded-full {backendOnline
+            class="w-2.5 h-2.5 rounded-full shrink-0 {backendOnline
               ? 'bg-[#19231f]'
               : 'bg-[#5366e8]'}"
           ></span>
-          <span>
+          <span class="truncate text-[#19231f]">
             {backendOnline
-              ? 'Go Parallel Engine Online (:8080) · 24 TLDs · Dictionary Combinator · Wayback + CT + Port/TLS'
+              ? 'Go Parallel Engine Online (:8080) · 24 TLDs · Robots/Sitemap · Social Meta & Ad Radar'
               : 'Standalone Studio · Run `./bin/scanner serve` for live sockets'}
           </span>
         </div>
@@ -467,16 +584,15 @@
         </h1>
 
         <p class="text-sm sm:text-base text-[#48534e] max-w-2xl leading-relaxed">
-          Editorial domain intelligence &amp; surface reconnaissance studio: 24-TLD dictionary search, calibrated
-          registrar vs. aftermarket valuation, clickable Wayback Machine archives, 14-port TCP/TLS inspection, and live job cancellation.
+          Editorial domain intelligence &amp; surface reconnaissance studio: 24-TLD dictionary search, sub-route site cartography (`bemee.in/@nyx`), `robots.txt` &amp; `sitemap.xml` inspector, Discord/Telegram/WhatsApp card previews, and Ad Network / Analytics telemetry.
         </p>
       </div>
 
-      <!-- 5-Col Live Synchronized Go CLI Terminal Card -->
+      <!-- 5-Col Live Synchronized Go CLI Terminal Card (Truncated with 1-click Copy, zero scrollbar) -->
       <div class="lg:col-span-5 bento-card-ink p-5 space-y-3 shadow-lg">
         <div class="flex items-center justify-between text-xs">
           <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-[#dffc78]"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-[#dffc78] shrink-0"></span>
             <span class="font-display font-bold uppercase tracking-wider text-[#fffdf8]/80">
               Synchronized Go CLI Invocation
             </span>
@@ -484,14 +600,19 @@
           <button
             type="button"
             onclick={copyCliCommand}
-            class="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-[#fffdf8]/10 hover:bg-[#dffc78] hover:text-[#19231f] text-[#fffdf8] transition-colors cursor-pointer"
+            class="px-3 py-1 rounded-full text-[11px] font-mono bg-[#fffdf8]/15 hover:bg-[#dffc78] hover:text-[#19231f] text-[#fffdf8] transition-colors cursor-pointer shrink-0"
           >
-            {copiedCli ? 'Copied!' : 'Copy'}
+            {copiedCli ? '✓ Copied' : 'Copy'}
           </button>
         </div>
 
-        <div class="rounded-xl bg-[#0f1613] border border-[#fffdf8]/15 px-4 py-3 font-mono text-xs text-[#dffc78] overflow-x-auto">
-          <span class="text-[#fffdf8]/50 select-none">$ </span>./bin/{cliPreview}
+        <div
+          class="rounded-xl bg-[#0f1613] border border-[#fffdf8]/15 px-4 py-3 font-mono text-xs text-[#dffc78] overflow-hidden flex items-center justify-between gap-2"
+          title={`./bin/${cliPreview}`}
+        >
+          <span class="truncate">
+            <span class="text-[#fffdf8]/50 select-none">$ </span>./bin/{cliPreview}
+          </span>
         </div>
 
         <div class="flex items-center justify-between text-[11px] text-[#fffdf8]/70 font-mono">
@@ -534,6 +655,7 @@
         report={crawlReport}
         loading={crawlLoading}
         onRunCrawl={handleRunCrawl}
+        onCancelJob={() => handleCancelJob()}
         onInspectDomain={handleInspectDomain}
       />
     {:else if activeMode === 'recon'}
@@ -546,6 +668,23 @@
         onCheckHistory={handleCheckHistory}
         onSaveDomain={handleToggleSave}
         {savedDomainsSet}
+      />
+    {:else if activeMode === 'robots'}
+      <RobotsSitemapStudio
+        report={robotsReport}
+        loading={robotsLoading}
+        onRunCheck={handleRunRobotsCheck}
+        onCancelJob={() => handleCancelJob()}
+        onCrawlUrl={handleCrawlDomain}
+        onInspectMeta={handleRunMetaCheck}
+      />
+    {:else if activeMode === 'meta'}
+      <SocialMetaStudio
+        report={metaReport}
+        loading={metaLoading}
+        onRunMetaCheck={handleRunMetaCheck}
+        onCancelJob={() => handleCancelJob()}
+        onCrawlUrl={handleCrawlDomain}
       />
     {:else if activeMode === 'vault'}
       <WatchlistVault
@@ -560,67 +699,50 @@
       />
     {/if}
 
-    <!-- BOTTOM STUDIO REFERENCE BENTO: Real CLI Guides & Capabilities -->
+    <!-- BOTTOM STUDIO REFERENCE BENTO: Truncated Commands with Copy Button (Zero Horizontal Scroll) -->
     <section aria-labelledby="cli-field-guide" class="pt-6 border-t border-[#19231f]/12 space-y-5">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="cli-field-guide" class="font-display font-bold text-xl text-[#19231f]">
           Terminal Field <span class="font-serif-editorial font-normal text-2xl">Guide</span>
         </h2>
-        <span class="text-xs text-[#48534e]">Every UI action maps 1:1 to a local Go subcommand</span>
+        <span class="text-xs text-[#48534e]">Click any command pill to copy directly to your clipboard</span>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-12 gap-5">
-        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
-          <div class="flex items-center justify-between">
-            <span class="studio-label">01 · Dictionary Scan</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#dffc78] border border-[#19231f]">
-              24 TLDs
-            </span>
-          </div>
-          <p class="text-xs text-[#48534e] leading-relaxed">
-            Scan curated dictionary packs across 24 TLDs with calibrated registrar &amp; flip pricing.
-          </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner veltrix --available</pre>
-        </div>
+        {#each terminalGuides as guide, idx}
+          <div class="md:col-span-3 bento-card p-5 space-y-3 bg-[#fffdf8] flex flex-col justify-between">
+            <div class="space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <span class="studio-label">{guide.label}</span>
+                <span
+                  class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold {guide.badgeBg} border border-[#19231f] shrink-0"
+                >
+                  {guide.badge}
+                </span>
+              </div>
+              <p class="text-xs text-[#48534e] leading-relaxed">
+                {guide.desc}
+              </p>
+            </div>
 
-        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
-          <div class="flex items-center justify-between">
-            <span class="studio-label">02 · Past History</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] border border-[#19231f]">
-              Wayback + RDAP + CT
-            </span>
+            <!-- Truncated Command Bar with Copy Button (No Horizontal Scrollbar) -->
+            <div
+              class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 px-3 py-2.5 flex items-center justify-between gap-2 overflow-hidden"
+              title={guide.cmd}
+            >
+              <code class="text-xs font-mono text-[#19231f] truncate select-all">
+                {guide.cmd}
+              </code>
+              <button
+                type="button"
+                onclick={() => copyGuideCommand(guide.cmd, idx)}
+                class="px-2.5 py-1 rounded-lg text-[11px] font-display font-bold bg-[#19231f] hover:bg-[#5366e8] text-[#dffc78] transition-colors cursor-pointer shrink-0"
+              >
+                {copiedGuideIndex === idx ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
           </div>
-          <p class="text-xs text-[#48534e] leading-relaxed">
-            Inspect Wayback yearly snapshots, RDAP original creation date, and historical TLS logs.
-          </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner history supercoloring.com</pre>
-        </div>
-
-        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
-          <div class="flex items-center justify-between">
-            <span class="studio-label">03 · Port & TLS Recon</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#d9d6fc] border border-[#19231f]">
-              28 Workers
-            </span>
-          </div>
-          <p class="text-xs text-[#48534e] leading-relaxed">
-            Probe 14 TCP ports, HTTP header ledger, `robots.txt`/`security.txt`, and CNAME takeover risk.
-          </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner recon supercoloring.com</pre>
-        </div>
-
-        <div class="md:col-span-3 bento-card p-5 space-y-2.5 bg-[#fffdf8]">
-          <div class="flex items-center justify-between">
-            <span class="studio-label">04 · Site Tree</span>
-            <span class="px-2 py-0.5 rounded-full text-[11px] font-display font-bold bg-[#dffc78] border border-[#19231f]">
-              Crawler
-            </span>
-          </div>
-          <p class="text-xs text-[#48534e] leading-relaxed">
-            Crawl internal link graphs and render a box-drawing hierarchy in terminal.
-          </p>
-          <pre class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/15 p-3 text-xs font-mono text-[#19231f] overflow-x-auto">./bin/scanner crawl svelte.dev</pre>
-        </div>
+        {/each}
       </div>
     </section>
   </main>

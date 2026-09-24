@@ -11,7 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"io"
+
 	"github.com/rny/scanner/internal/domain"
+	"github.com/rny/scanner/internal/webintel"
 )
 
 // PortProbe represents the scan status of a single TCP port.
@@ -53,26 +56,27 @@ type SecurityCheck struct {
 	Detail  string `json:"detail"`
 }
 
-// ReconReport aggregates parallel port scanning, TLS handshake, subdomains, headers, and security posture.
+// ReconReport aggregates parallel port scanning, TLS handshake, subdomains, headers, security posture, and ad/tracker telemetry.
 type ReconReport struct {
-	Domain             string            `json:"domain"`
-	LiveSiteURL        string            `json:"liveSiteUrl"`
-	WaybackCalendarURL string            `json:"waybackCalendarUrl"`
-	TargetIP           string            `json:"targetIp"`
-	ReversePTR         string            `json:"reversePtr,omitempty"`
-	OpenPortsCount     int               `json:"openPortsCount"`
-	PortsScanned       int               `json:"portsScanned"`
-	Ports              []PortProbe       `json:"ports"`
-	TLS                TLSInfo           `json:"tls"`
-	Subdomains         []SubdomainHit    `json:"subdomains"`
-	HTTPHeaders        map[string]string `json:"httpHeaders,omitempty"`
-	HasRobotsTxt       bool              `json:"hasRobotsTxt"`
-	HasSecurityTxt     bool              `json:"hasSecurityTxt"`
-	HasSitemapXml      bool              `json:"hasSitemapXml"`
-	SecurityGrade      string            `json:"securityGrade"`
-	SecurityScore      int               `json:"securityScore"`
-	SecurityChecks     []SecurityCheck   `json:"securityChecks"`
-	DurationMs         int64             `json:"durationMs"`
+	Domain             string                    `json:"domain"`
+	LiveSiteURL        string                    `json:"liveSiteUrl"`
+	WaybackCalendarURL string                    `json:"waybackCalendarUrl"`
+	TargetIP           string                    `json:"targetIp"`
+	ReversePTR         string                    `json:"reversePtr,omitempty"`
+	OpenPortsCount     int                       `json:"openPortsCount"`
+	PortsScanned       int                       `json:"portsScanned"`
+	Ports              []PortProbe               `json:"ports"`
+	TLS                TLSInfo                   `json:"tls"`
+	Subdomains         []SubdomainHit            `json:"subdomains"`
+	HTTPHeaders        map[string]string         `json:"httpHeaders,omitempty"`
+	HasRobotsTxt       bool                      `json:"hasRobotsTxt"`
+	HasSecurityTxt     bool                      `json:"hasSecurityTxt"`
+	HasSitemapXml      bool                      `json:"hasSitemapXml"`
+	SecurityGrade      string                    `json:"securityGrade"`
+	SecurityScore      int                       `json:"securityScore"`
+	SecurityChecks     []SecurityCheck           `json:"securityChecks"`
+	Trackers           webintel.TrackerTelemetry `json:"trackers"`
+	DurationMs         int64                     `json:"durationMs"`
 }
 
 type portTarget struct {
@@ -137,6 +141,7 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 		hasRobots      bool
 		hasSecurityTxt bool
 		hasSitemap     bool
+		trackers       webintel.TrackerTelemetry
 	)
 
 	wg.Add(4)
@@ -159,10 +164,10 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 		subdomains = discoverSubdomainsParallel(ctx, clean)
 	}()
 
-	// 4. HTTP Security Headers + Governance Files + SPF/DMARC Audit
+	// 4. HTTP Security Headers + Governance Files + SPF/DMARC + Ad/Tracker Audit
 	go func() {
 		defer wg.Done()
-		secChecks, secScore, secGrade, headersMap, hasRobots, hasSecurityTxt, hasSitemap = auditSecurityPosture(ctx, clean)
+		secChecks, secScore, secGrade, headersMap, hasRobots, hasSecurityTxt, hasSitemap, trackers = auditSecurityPosture(ctx, clean)
 	}()
 
 	wg.Wait()
@@ -185,6 +190,7 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 	report.SecurityChecks = secChecks
 	report.SecurityScore = secScore
 	report.SecurityGrade = secGrade
+	report.Trackers = trackers
 	report.DurationMs = time.Since(start).Milliseconds()
 
 	return report
@@ -337,21 +343,28 @@ func auditSecurityPosture(ctx context.Context, host string) (
 	grade string,
 	headers map[string]string,
 	hasRobots, hasSecurityTxt, hasSitemap bool,
+	trackers webintel.TrackerTelemetry,
 ) {
 	headers = make(map[string]string)
 
-	reqCtx, cancel := context.WithTimeout(ctx, 4000*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
 	defer cancel()
 
-	client := &http.Client{Timeout: 3500 * time.Millisecond}
+	client := &http.Client{Timeout: 4000 * time.Millisecond}
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, "https://"+host, nil)
 	if req != nil {
-		req.Header.Set("User-Agent", "Scanner-Security-Auditor/2.0")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Scanner-Security-Auditor/2.0)")
 	}
+
+	var htmlSample string
+	var respHeader http.Header
 
 	resp, err := client.Do(req)
 	if err == nil {
 		defer resp.Body.Close()
+		respHeader = resp.Header
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 300*1024))
+		htmlSample = string(bodyBytes)
 
 		interestingHeaders := []string{
 			"Server", "X-Powered-By", "CF-Ray", "Cache-Control",
@@ -479,7 +492,8 @@ func auditSecurityPosture(ctx context.Context, host string) (
 		grade = "D"
 	}
 
-	return checks, score, grade, headers, hasRobots, hasSecurityTxt, hasSitemap
+	trackers = webintel.DetectTrackersFromHTML([]string{htmlSample}, respHeader)
+	return checks, score, grade, headers, hasRobots, hasSecurityTxt, hasSitemap, trackers
 }
 
 func checkEndpointStatus(ctx context.Context, client *http.Client, url string) bool {

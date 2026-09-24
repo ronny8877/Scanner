@@ -2,6 +2,7 @@
   import type { ReconReport } from '../types';
   import { motionCard } from '../motion';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import TrackerPostureCard from './TrackerPostureCard.svelte';
 
   interface Props {
     report: ReconReport | null;
@@ -321,8 +322,12 @@
         </div>
       </div>
 
-      <!-- 5-Col Subdomains + HTTP Headers + TLS SANs -->
+      <!-- 5-Col Ad/Tracker Posture + Subdomains + HTTP Headers + TLS SANs -->
       <div use:motionCard={{ delay: 0.14 }} class="lg:col-span-5 space-y-6">
+        {#if report.trackers}
+          <TrackerPostureCard trackers={report.trackers} />
+        {/if}
+
         <!-- Active Subdomains & CNAME Takeover Check -->
         <div class="bento-card p-6 space-y-4">
           <div class="flex items-center justify-between border-b border-[#19231f]/10 pb-3">

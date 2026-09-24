@@ -1,1 +1,32 @@
-null
+[
+  {
+    "domain": "cloudflare.com",
+    "available": false,
+    "status": "Registered",
+    "valuation": {
+      "score": 73,
+      "tier": "High-Potential Brandable",
+      "regFeeUsd": 10,
+      "regFeeDisplay": "$10/yr Reg",
+      "estimatedMinUsd": 95,
+      "estimatedMaxUsd": 340,
+      "estimatedDisplay": "$10/yr · Flip $95–$340",
+      "lengthScore": 13,
+      "tldScore": 25,
+      "phoneticScore": 22,
+      "keywordScore": 13,
+      "isDictionaryWord": false,
+      "highlights": [
+        "Global .com standard ($10/yr reg)",
+        "Natural vowel-consonant phonetic cadence",
+        "Contains high-demand commercial stem"
+      ]
+    },
+    "notes": "Active registered domain watch",
+    "tags": [
+      "Watch"
+    ],
+    "savedAt": "2026-09-25T02:43:56+05:30",
+    "lastCheckedAt": "2026-09-25T02:43:56+05:30"
+  }
+]

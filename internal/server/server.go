@@ -14,6 +14,7 @@ import (
 	"github.com/rny/scanner/internal/jobs"
 	"github.com/rny/scanner/internal/recon"
 	"github.com/rny/scanner/internal/watchlist"
+	"github.com/rny/scanner/internal/webintel"
 )
 
 // Server wraps the HTTP API server, Enterprise Job Manager, and Watchlist Store.
@@ -46,6 +47,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/history", s.withCORS(s.handleHistory))
 	mux.HandleFunc("/api/recon", s.withCORS(s.handleRecon))
 	mux.HandleFunc("/api/crawl", s.withCORS(s.handleCrawl))
+	mux.HandleFunc("/api/robots", s.withCORS(s.handleRobots))
+	mux.HandleFunc("/api/meta", s.withCORS(s.handleMeta))
 	mux.HandleFunc("/api/parallel-suite", s.withCORS(s.handleParallelSuite))
 	mux.HandleFunc("/api/jobs", s.withCORS(s.handleJobs))
 	mux.HandleFunc("/api/jobs/cancel", s.withCORS(s.handleJobCancel))
@@ -274,6 +277,78 @@ func (s *Server) handleCrawl(w http.ResponseWriter, r *http.Request) {
 
 	report := crawler.CrawlSite(jobCtx, opts)
 	summary := fmt.Sprintf("%d pages crawled · %d internal routes", report.PagesCrawled, report.TotalLinks)
+	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
+
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleRobots(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		target = strings.TrimSpace(r.URL.Query().Get("domain"))
+	}
+	if target == "" && r.Method == http.MethodPost {
+		var body struct {
+			Target string `json:"target"`
+			Domain string `json:"domain"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Target != "" {
+			target = body.Target
+		} else {
+			target = body.Domain
+		}
+	}
+	if target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target is required"})
+		return
+	}
+
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 22*time.Second)
+	defer baseCancel()
+
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "robots", "Robots.txt & Sitemap.xml Audit", target, 6)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 50, "Parsing robots.txt User-agent rules & XML sitemaps…")
+
+	report := webintel.InspectRobotsAndSitemap(jobCtx, target)
+	summary := fmt.Sprintf("Robots: %v (%d rules) · Sitemap: %d URLs", report.RobotsFound, report.TotalDisallowCount+report.TotalAllowCount, report.TotalUrlsCount)
+	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
+
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("target"))
+	if target == "" {
+		target = strings.TrimSpace(r.URL.Query().Get("url"))
+	}
+	if target == "" && r.Method == http.MethodPost {
+		var body struct {
+			Target string `json:"target"`
+			URL    string `json:"url"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Target != "" {
+			target = body.Target
+		} else {
+			target = body.URL
+		}
+	}
+	if target == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target URL is required"})
+		return
+	}
+
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer baseCancel()
+
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "meta", "Social Meta & Ad/Tracker Inspection", target, 4)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 55, "Extracting OpenGraph/Twitter cards & scanning Ad/Tracker scripts…")
+
+	report := webintel.InspectMetaAndSocial(jobCtx, target)
+	summary := fmt.Sprintf("Social Grade %s · Trackers Grade %s (%d detected)", report.SocialGrade, report.Trackers.PrivacyGrade, report.Trackers.TotalDetected)
 	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
 
 	writeJSON(w, http.StatusOK, report)
