@@ -2,9 +2,8 @@
 bin/
 scanner
 
-# Node / Svelte build artifacts
+# Node / Svelte dev caches (web/dist is kept tracked for zero-dependency single-binary builds)
 web/node_modules/
-web/dist/
 web/.vite/
 
 # Local runtime state

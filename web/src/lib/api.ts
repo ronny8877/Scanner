@@ -15,7 +15,10 @@ import type {
   TechStackTelemetry,
 } from './types';
 
-const API_BASE = 'http://localhost:8080';
+const API_BASE =
+  typeof window !== 'undefined' && window.location.port && window.location.port !== '5173'
+    ? window.location.origin
+    : 'http://localhost:8080';
 
 let currentAbortController: AbortController | null = null;
 

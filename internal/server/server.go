@@ -16,6 +16,7 @@ import (
 	"github.com/rny/scanner/internal/traffic"
 	"github.com/rny/scanner/internal/watchlist"
 	"github.com/rny/scanner/internal/webintel"
+	"github.com/rny/scanner/web"
 )
 
 // Server wraps the HTTP API server, Enterprise Job Manager, and Watchlist Store.
@@ -56,6 +57,18 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/jobs/cancel", s.withCORS(s.handleJobCancel))
 	mux.HandleFunc("/api/watchlist", s.withCORS(s.handleWatchlist))
 	mux.HandleFunc("/api/watchlist/recheck", s.withCORS(s.handleWatchlistRecheck))
+
+	// Serve embedded Svelte 5 Web Studio directly from the single binary at /
+	if distFS, err := web.DistFS(); err == nil {
+		fileServer := http.FileServer(http.FS(distFS))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
+			fileServer.ServeHTTP(w, r)
+		})
+	}
 
 	srv := &http.Server{
 		Addr:         s.Addr,

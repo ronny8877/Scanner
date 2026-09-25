@@ -15,18 +15,20 @@ var serveCmd = &cobra.Command{
 	Short: "Start the HTTP API server powering the Svelte Domain Intelligence UI",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		addr := fmt.Sprintf(":%d", flagPort)
-		fmt.Println(RenderBanner(fmt.Sprintf("Mode: API Server for Svelte UI  •  Listening on http://localhost%s", addr)))
+		fmt.Println(RenderBanner(fmt.Sprintf("Mode: Single-Binary Web Studio + API Server  •  http://localhost%s", addr)))
 
 		infoBox := fmt.Sprintf(
-			"%s %s\n%s %s\n%s %s\n%s %s",
-			LabelStyle.Render("API Endpoint:"),
-			lipgloss.NewStyle().Bold(true).Foreground(ColorEmerald).Render(fmt.Sprintf("http://localhost%s/api", addr)),
-			LabelStyle.Render("Scan Route:"),
-			ValueStyle.Render("POST /api/scan     (Available domain discovery & valuation)"),
+			"%s %s\n%s %s\n%s %s\n%s %s\n%s %s",
+			LabelStyle.Render("Web Studio UI:"),
+			lipgloss.NewStyle().Bold(true).Foreground(ColorEmerald).Render(fmt.Sprintf("http://localhost%s      (Full Svelte 5 Studio Embedded)", addr)),
+			LabelStyle.Render("API Endpoint: "),
+			lipgloss.NewStyle().Bold(true).Foreground(ColorEmerald).Render(fmt.Sprintf("http://localhost%s/api  (Go Parallel Reconnaissance Engine)", addr)),
+			LabelStyle.Render("Scan Route:   "),
+			ValueStyle.Render("POST /api/scan           (24-TLD discovery & appraisal)"),
 			LabelStyle.Render("Inspect Route:"),
-			ValueStyle.Render("GET  /api/inspect  (RDAP registration dates, age & DNS)"),
-			LabelStyle.Render("Crawl Route:"),
-			ValueStyle.Render("POST /api/crawl    (Site hierarchy & structure tree)"),
+			ValueStyle.Render("GET  /api/inspect        (RDAP, Port-43 WHOIS, DNS & age)"),
+			LabelStyle.Render("Dossier Suite:"),
+			ValueStyle.Render("POST /api/parallel-suite (360° Master Domain Report)"),
 		)
 		fmt.Println(CardStyle.Render(infoBox))
 
