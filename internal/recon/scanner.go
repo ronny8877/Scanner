@@ -73,10 +73,11 @@ type ReconReport struct {
 	HasSecurityTxt     bool                      `json:"hasSecurityTxt"`
 	HasSitemapXml      bool                      `json:"hasSitemapXml"`
 	SecurityGrade      string                    `json:"securityGrade"`
-	SecurityScore      int                       `json:"securityScore"`
-	SecurityChecks     []SecurityCheck           `json:"securityChecks"`
-	Trackers           webintel.TrackerTelemetry `json:"trackers"`
-	DurationMs         int64                     `json:"durationMs"`
+	SecurityScore      int                         `json:"securityScore"`
+	SecurityChecks     []SecurityCheck             `json:"securityChecks"`
+	Trackers           webintel.TrackerTelemetry   `json:"trackers"`
+	TechStack          webintel.TechStackTelemetry `json:"techStack"`
+	DurationMs         int64                       `json:"durationMs"`
 }
 
 type portTarget struct {
@@ -142,6 +143,7 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 		hasSecurityTxt bool
 		hasSitemap     bool
 		trackers       webintel.TrackerTelemetry
+		techStack      webintel.TechStackTelemetry
 	)
 
 	wg.Add(4)
@@ -164,10 +166,10 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 		subdomains = discoverSubdomainsParallel(ctx, clean)
 	}()
 
-	// 4. HTTP Security Headers + Governance Files + SPF/DMARC + Ad/Tracker Audit
+	// 4. HTTP Security Headers + Governance Files + SPF/DMARC + Ad/Tracker + Tech Stack Audit
 	go func() {
 		defer wg.Done()
-		secChecks, secScore, secGrade, headersMap, hasRobots, hasSecurityTxt, hasSitemap, trackers = auditSecurityPosture(ctx, clean)
+		secChecks, secScore, secGrade, headersMap, hasRobots, hasSecurityTxt, hasSitemap, trackers, techStack = auditSecurityPosture(ctx, clean)
 	}()
 
 	wg.Wait()
@@ -191,6 +193,7 @@ func RunRecon(ctx context.Context, rawTarget string) ReconReport {
 	report.SecurityScore = secScore
 	report.SecurityGrade = secGrade
 	report.Trackers = trackers
+	report.TechStack = techStack
 	report.DurationMs = time.Since(start).Milliseconds()
 
 	return report
@@ -430,6 +433,7 @@ func auditSecurityPosture(ctx context.Context, host string) (
 	headers map[string]string,
 	hasRobots, hasSecurityTxt, hasSitemap bool,
 	trackers webintel.TrackerTelemetry,
+	techStack webintel.TechStackTelemetry,
 ) {
 	headers = make(map[string]string)
 
@@ -579,7 +583,8 @@ func auditSecurityPosture(ctx context.Context, host string) (
 	}
 
 	trackers = webintel.DetectTrackersFromHTML([]string{htmlSample}, respHeader)
-	return checks, score, grade, headers, hasRobots, hasSecurityTxt, hasSitemap, trackers
+	techStack = webintel.DetectTechStackFromHTML([]string{htmlSample}, nil, respHeader)
+	return checks, score, grade, headers, hasRobots, hasSecurityTxt, hasSitemap, trackers, techStack
 }
 
 func checkEndpointStatus(ctx context.Context, client *http.Client, url string) bool {

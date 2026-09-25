@@ -12,6 +12,7 @@ import type {
   RobotsSitemapReport,
   MetaSocialReport,
   TrafficReport,
+  TechStackTelemetry,
 } from './types';
 
 const API_BASE = 'http://localhost:8080';
@@ -697,6 +698,7 @@ export function synthesizeReconReport(raw: string): ReconReport {
         },
       ],
     },
+    techStack: synthesizeTechStack(clean),
     durationMs: 310,
   };
 }
@@ -767,6 +769,7 @@ export function synthesizeCrawlReport(rawUrl: string): CrawlReport {
         },
       ],
     },
+    techStack: synthesizeTechStack(host),
   };
 }
 
@@ -859,6 +862,109 @@ export function synthesizeMetaSocialReport(rawTarget: string): MetaSocialReport 
       totalDetected: 1,
       detectedTrackers: [],
     },
+    techStack: synthesizeTechStack(host),
+  };
+}
+
+export function synthesizeTechStack(rawTarget: string): TechStackTelemetry {
+  const clean = rawTarget.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
+  const isSvelte = clean.includes('svelte');
+  return {
+    primaryFramework: isSvelte ? 'Svelte / SvelteKit' : 'Next.js + React',
+    uiSystemSummary: isSvelte
+      ? 'Tailwind CSS · Vite Bundler · Lucide Icons'
+      : 'Tailwind CSS · shadcn/ui · Radix UI Primitives · Framer Motion',
+    edgePlatform: 'Cloudflare Edge & CDN + Vercel Edge Network',
+    summary: isSvelte
+      ? 'Powered by Svelte / SvelteKit with Tailwind CSS · Vite Bundler on Cloudflare Edge & CDN (5 technologies fingerprinted).'
+      : 'Powered by Next.js + React with Tailwind CSS · shadcn/ui · Radix UI Primitives on Vercel Edge Network (6 technologies fingerprinted).',
+    totalDetected: isSvelte ? 5 : 6,
+    frameworksCount: isSvelte ? 1 : 2,
+    uiCount: 3,
+    platformCount: 0,
+    infraCount: 1,
+    technologies: isSvelte
+      ? [
+          {
+            name: 'Svelte / SvelteKit',
+            category: 'FRAMEWORK',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `__sveltekit` & `/_app/immutable/`',
+            description: 'Compiler-first reactive UI framework & SvelteKit app router',
+          },
+          {
+            name: 'Tailwind CSS',
+            category: 'UI_DESIGN',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `--tw-` & utility class tokens',
+            description: 'Utility-first CSS framework with responsive & design-token utilities',
+          },
+          {
+            name: 'Vite Bundler',
+            category: 'BUILD_MOTION',
+            confidence: 'HIGH',
+            matchedBy: 'Signature `modulepreload` ES bundle chunks',
+            description: 'Next-generation ES module frontend build toolchain',
+          },
+          {
+            name: 'Lucide / Feather Vector Icons',
+            category: 'BUILD_MOTION',
+            confidence: 'HIGH',
+            matchedBy: 'Signature `lucide` stroke vector SVG paths',
+            description: 'Clean stroke-based SVG icon library',
+          },
+          {
+            name: 'Cloudflare Edge & CDN',
+            category: 'EDGE_HOSTING',
+            confidence: 'CERTAIN',
+            matchedBy: 'Header `cf-ray` & `server: cloudflare`',
+            description: 'Global Anycast CDN, DNS, WAF & Workers edge compute',
+          },
+        ]
+      : [
+          {
+            name: 'Next.js',
+            category: 'FRAMEWORK',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `/_next/static/` & `self.__next_f.push`',
+            description: 'React full-stack framework with App/Pages Router & SSR/ISR',
+          },
+          {
+            name: 'React',
+            category: 'FRAMEWORK',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `react-dom` & Next.js hydration chunks',
+            description: 'Component-driven JavaScript UI library by Meta',
+          },
+          {
+            name: 'Tailwind CSS',
+            category: 'UI_DESIGN',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `--tw-ring-offset-shadow` & utility classes',
+            description: 'Utility-first CSS framework with responsive design tokens',
+          },
+          {
+            name: 'shadcn/ui',
+            category: 'UI_DESIGN',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `--muted-foreground` + `bg-background text-foreground`',
+            description: 'Radix Primitives + Tailwind CSS design-token component architecture',
+          },
+          {
+            name: 'Radix UI Primitives',
+            category: 'UI_DESIGN',
+            confidence: 'CERTAIN',
+            matchedBy: 'Signature `data-radix-popper-content-wrapper` & `--radix-`',
+            description: 'Unstyled accessible UI primitives powering modern React/shadcn design systems',
+          },
+          {
+            name: 'Vercel Edge Network',
+            category: 'EDGE_HOSTING',
+            confidence: 'CERTAIN',
+            matchedBy: 'Header `x-vercel-id` & `server: Vercel`',
+            description: 'Serverless & Edge deployment cloud platform',
+          },
+        ],
   };
 }
 

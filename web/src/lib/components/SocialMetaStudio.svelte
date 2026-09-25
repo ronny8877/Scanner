@@ -3,6 +3,7 @@
   import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import TechStackCard from './TechStackCard.svelte';
   import ValidationBanner from './ValidationBanner.svelte';
   import { motionCard } from '../motion';
 
@@ -473,5 +474,10 @@
         </div>
       </div>
     </div>
+
+    <!-- Tech Stack Fingerprint Card (React, Next.js, SvelteKit, Tailwind CSS, shadcn/ui, DaisyUI, Radix, Edge) -->
+    {#if report.techStack}
+      <TechStackCard techStack={report.techStack} />
+    {/if}
   {/if}
 </section>

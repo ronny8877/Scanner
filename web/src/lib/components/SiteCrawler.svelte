@@ -4,6 +4,7 @@
   import TreeItem from './TreeItem.svelte';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import TechStackCard from './TechStackCard.svelte';
   import ValidationBanner from './ValidationBanner.svelte';
   import { motionCard } from '../motion';
 
@@ -394,5 +395,9 @@
         </table>
       </div>
     </div>
+
+    {#if report.techStack}
+      <TechStackCard techStack={report.techStack} />
+    {/if}
   {/if}
 </section>

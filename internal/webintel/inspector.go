@@ -141,9 +141,10 @@ type MetaSocialReport struct {
 	ResolvedThemeColor  string            `json:"resolvedThemeColor"`
 	SocialScore         int               `json:"socialScore"`
 	SocialGrade         string            `json:"socialGrade"`
-	AuditChecks         []MetaAuditCheck  `json:"auditChecks"`
-	AllMetaTags         map[string]string `json:"allMetaTags"`
-	Trackers            TrackerTelemetry  `json:"trackers"`
+	AuditChecks         []MetaAuditCheck   `json:"auditChecks"`
+	AllMetaTags         map[string]string  `json:"allMetaTags"`
+	Trackers            TrackerTelemetry   `json:"trackers"`
+	TechStack           TechStackTelemetry `json:"techStack"`
 }
 
 type trackerSignature struct {
@@ -1073,6 +1074,7 @@ func InspectMetaAndSocial(ctx context.Context, target string) MetaSocialReport {
 			},
 		}
 		report.Trackers = DetectTrackersFromHTML([]string{bodyStr}, nil)
+		report.TechStack = DetectTechStackFromHTML([]string{bodyStr}, nil, nil)
 		report.DurationMs = time.Since(start).Milliseconds()
 		return report
 	}
@@ -1232,7 +1234,24 @@ func InspectMetaAndSocial(ctx context.Context, target string) MetaSocialReport {
 	}
 	report.AuditChecks = checks
 
+	// Extract first stylesheet href if present to fingerprint CSS variables (Tailwind, shadcn/ui, DaisyUI, Radix)
+	var cssChunks []string
+	for _, linkTag := range reLinkTag.FindAllString(bodyStr, 8) {
+		attrs := parseAttributes(linkTag)
+		rel := strings.ToLower(attrs["rel"])
+		href := strings.TrimSpace(attrs["href"])
+		if strings.Contains(rel, "stylesheet") && href != "" {
+			cssURL := resolveRelativeAsset(report.FinalURL, href)
+			cssClient := &http.Client{Timeout: 2200 * time.Millisecond}
+			if cssBytes, cssCode, _ := fetchWithAdaptiveStrategy(ctx, cssClient, cssURL, 96*1024); cssCode >= 200 && cssCode < 300 && len(cssBytes) > 0 {
+				cssChunks = append(cssChunks, string(cssBytes))
+				break
+			}
+		}
+	}
+
 	report.Trackers = DetectTrackersFromHTML([]string{bodyStr}, nil)
+	report.TechStack = DetectTechStackFromHTML([]string{bodyStr}, cssChunks, nil)
 	report.DurationMs = time.Since(start).Milliseconds()
 
 	return report

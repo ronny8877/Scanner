@@ -4,6 +4,7 @@
   import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import TechStackCard from './TechStackCard.svelte';
   import StudioIcon from './StudioIcon.svelte';
   import ValidationBanner from './ValidationBanner.svelte';
 
@@ -467,5 +468,9 @@
         {/if}
       </div>
     </div>
+
+    {#if report.techStack}
+      <TechStackCard techStack={report.techStack} />
+    {/if}
   {/if}
 </section>

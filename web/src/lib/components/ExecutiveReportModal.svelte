@@ -263,7 +263,23 @@
                 {s.meta?.trackers?.totalDetected ?? 0} SDKs ({s.meta?.trackers?.verdict || 'Clean Surface'})
               </span>
             </div>
+            <div class="flex justify-between border-t border-[#19231f]/10 pt-2">
+              <span class="text-[#19231f]/60">Frontend & UI Stack</span>
+              <span class="font-display font-bold text-[#5366e8]">
+                {s.meta?.techStack?.primaryFramework || s.recon?.techStack?.primaryFramework || 'Next.js / React'} · {s.meta?.techStack?.uiSystemSummary || s.recon?.techStack?.uiSystemSummary || 'Tailwind CSS'}
+              </span>
+            </div>
           </div>
+
+          {#if (s.meta?.techStack?.technologies || s.recon?.techStack?.technologies)?.length}
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              {#each (s.meta?.techStack?.technologies || s.recon?.techStack?.technologies || []) as tech}
+                <span class="rounded-lg border border-[#19231f]/20 bg-[#d9d6fc]/55 px-2.5 py-1 font-display text-[11px] font-bold text-[#19231f]">
+                  {tech.name}
+                </span>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
     </div>

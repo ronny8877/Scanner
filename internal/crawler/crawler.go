@@ -60,9 +60,10 @@ type CrawlReport struct {
 	ExternalCount int                       `json:"externalCount"`
 	TechHeaders   []string                  `json:"techHeaders,omitempty"`
 	DurationMs    int64                     `json:"durationMs"`
-	Pages         []PageInfo                `json:"pages"`
-	Tree          *SiteNode                 `json:"tree"`
-	Trackers      webintel.TrackerTelemetry `json:"trackers"`
+	Pages         []PageInfo                  `json:"pages"`
+	Tree          *SiteNode                   `json:"tree"`
+	Trackers      webintel.TrackerTelemetry   `json:"trackers"`
+	TechStack     webintel.TechStackTelemetry `json:"techStack"`
 }
 
 var (
@@ -232,6 +233,7 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 
 	tree := buildSiteTree(rootHost, seedPath, pages)
 	trackers := webintel.DetectTrackersFromHTML(htmlSamples, firstHeader)
+	techStack := webintel.DetectTechStackFromHTML(htmlSamples, nil, firstHeader)
 
 	return CrawlReport{
 		RootURL:       seedFullURL,
@@ -245,6 +247,7 @@ func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 		Pages:         pages,
 		Tree:          tree,
 		Trackers:      trackers,
+		TechStack:     techStack,
 	}
 }
 

@@ -141,6 +141,27 @@ export interface TrackerTelemetry {
   detectedTrackers?: DetectedTracker[];
 }
 
+export interface DetectedTech {
+  name: string;
+  category: 'FRAMEWORK' | 'UI_DESIGN' | 'BUILD_MOTION' | 'PLATFORM_AUTH' | 'EDGE_HOSTING' | string;
+  confidence: 'CERTAIN' | 'HIGH' | 'DETECTED' | string;
+  matchedBy: string;
+  description: string;
+}
+
+export interface TechStackTelemetry {
+  primaryFramework: string;
+  uiSystemSummary: string;
+  edgePlatform: string;
+  summary: string;
+  totalDetected: number;
+  frameworksCount: number;
+  uiCount: number;
+  platformCount: number;
+  infraCount: number;
+  technologies?: DetectedTech[];
+}
+
 export interface CrawlerPermission {
   botName: string;
   category: string;
@@ -242,6 +263,7 @@ export interface MetaSocialReport {
   auditChecks: MetaAuditCheck[];
   allMetaTags?: Record<string, string>;
   trackers: TrackerTelemetry;
+  techStack?: TechStackTelemetry;
 }
 
 export interface PortProbe {
@@ -298,6 +320,7 @@ export interface ReconReport {
   securityScore: number;
   securityChecks: SecurityCheck[];
   trackers?: TrackerTelemetry;
+  techStack?: TechStackTelemetry;
   durationMs: number;
 }
 
@@ -339,6 +362,7 @@ export interface CrawlReport {
   pages: PageInfo[];
   tree: SiteNode;
   trackers?: TrackerTelemetry;
+  techStack?: TechStackTelemetry;
 }
 
 export interface SavedDomain {
