@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RobotsSitemapReport } from '../types';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import StudioIcon from './StudioIcon.svelte';
   import { motionCard } from '../motion';
 
   interface Props {
@@ -14,11 +15,12 @@
 
   let { report, loading, onRunCheck, onCancelJob, onCrawlUrl, onInspectMeta }: Props = $props();
 
-  let targetInput = $state('supercoloring.com');
+  let targetInput = $state('svelte.dev');
   let sitemapSearch = $state('');
   let showRawRobots = $state(false);
+  let showAllEntries = $state(false);
 
-  const sampleTargets = ['supercoloring.com', 'bemee.in', 'svelte.dev', 'github.com', 'cloudflare.com'];
+  const sampleTargets = ['svelte.dev', 'golang.org', 'github.com', 'cloudflare.com', 'vercel.com'];
 
   $effect(() => {
     if (report?.host) {
@@ -32,6 +34,10 @@
       const q = sitemapSearch.toLowerCase();
       return e.loc.toLowerCase().includes(q) || (e.lastMod || '').toLowerCase().includes(q);
     })
+  );
+
+  const visibleEntries = $derived(
+    showAllEntries ? filteredEntries : filteredEntries.slice(0, 18)
   );
 
   const blockedBotsCount = $derived(
@@ -70,7 +76,7 @@
       <input
         type="text"
         bind:value={targetInput}
-        placeholder="Enter domain or URL (e.g. supercoloring.com, bemee.in, svelte.dev)..."
+        placeholder="Enter domain or URL (e.g. svelte.dev, golang.org, github.com)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f]"
       />
       <button
@@ -78,12 +84,12 @@
         disabled={loading}
         class="studio-btn-primary px-6 py-3.5 text-sm cursor-pointer disabled:opacity-50 shrink-0"
       >
-        {loading ? 'Auditing Robots & Sitemaps…' : 'Inspect Robots & Sitemap →'}
+        {loading ? 'Auditing Robots & Sitemaps…' : 'Inspect Robots & Sitemap'}
       </button>
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
-      <span class="text-xs text-[#6d7873]">Quick test domain:</span>
+      <span class="text-xs text-[#6d7873]">Quick reference domain:</span>
       {#each sampleTargets as st}
         <button
           type="button"
@@ -135,9 +141,10 @@
             href={report.robotsUrl}
             target="_blank"
             rel="noopener noreferrer"
-            class="text-[#5366e8] font-bold hover:underline"
+            class="text-[#5366e8] font-bold hover:underline inline-flex items-center gap-1"
           >
-            Open robots.txt ↗
+            <span>Open robots.txt</span>
+            <StudioIcon name="external" class="w-3 h-3" />
           </a>
         </div>
       </div>
@@ -180,9 +187,10 @@
               href={report.sitemapUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="text-[#5366e8] font-bold hover:underline"
+              class="text-[#5366e8] font-bold hover:underline inline-flex items-center gap-1"
             >
-              Open XML ↗
+              <span>Open XML</span>
+              <StudioIcon name="external" class="w-3 h-3" />
             </a>
           {/if}
         </div>
@@ -207,12 +215,12 @@
       </div>
     </div>
 
-    <!-- Main Asymmetric Grid: 6-Col Bot Permission Matrix & Disallow Rules + 6-Col Sitemap Update Ledger -->
+    <!-- Main Asymmetric Grid: 6-Col Bot Permission Matrix & Disallow Rules + 6-Col Sitemap Update Ledger (Zero Scrollbars, Full Text Wrap) -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       <!-- Left 6-Col: Crawler Permission Matrix & Blocked Routes -->
-      <div class="lg:col-span-6 space-y-6">
+      <div class="lg:col-span-6 space-y-6 min-w-0">
         <!-- 12-Bot Permission Matrix -->
-        <div class="bento-card p-6 space-y-4 bg-[#fffdf8]">
+        <div class="bento-card p-6 space-y-4 bg-[#fffdf8] overflow-hidden">
           <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#19231f]/10 pb-3">
             <div>
               <h3 class="font-display font-bold text-lg text-[#19231f]">
@@ -226,24 +234,24 @@
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {#each report.botMatrix as bot}
-              <div class="rounded-2xl bg-[#f4f1e9] border border-[#19231f]/15 p-3.5 space-y-1.5">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="font-display font-bold text-xs text-[#19231f]">{bot.botName}</span>
+              <div class="rounded-2xl bg-[#f4f1e9] border border-[#19231f]/15 p-3.5 space-y-1.5 min-w-0">
+                <div class="flex flex-wrap items-center justify-between gap-1.5">
+                  <span class="font-display font-bold text-xs text-[#19231f] break-words">{bot.botName}</span>
                   {#if bot.status === 'BLOCKED'}
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#ffc3a5] border border-[#19231f] text-[#19231f]">
-                      ✕ BLOCKED
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#ffc3a5] border border-[#19231f] text-[#19231f] shrink-0">
+                      BLOCKED
                     </span>
                   {:else if bot.status === 'PARTIAL'}
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#d9d6fc] border border-[#19231f]/40 text-[#19231f]">
-                      ◐ RESTRICTED
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#d9d6fc] border border-[#19231f]/40 text-[#19231f] shrink-0">
+                      RESTRICTED
                     </span>
                   {:else}
-                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#dffc78] border border-[#19231f] text-[#19231f]">
-                      ✓ ALLOWED
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#dffc78] border border-[#19231f] text-[#19231f] shrink-0">
+                      ALLOWED
                     </span>
                   {/if}
                 </div>
-                <div class="text-[11px] font-mono text-[#48534e] truncate" title={bot.matchedRule}>
+                <div class="text-[11px] font-mono text-[#48534e] break-all whitespace-normal leading-relaxed">
                   {bot.matchedRule}
                 </div>
               </div>
@@ -251,9 +259,9 @@
           </div>
         </div>
 
-        <!-- Blocked & Allowed Routes per User-Agent Group -->
-        <div class="bento-card p-6 space-y-4 bg-[#fffdf8]">
-          <div class="flex items-center justify-between border-b border-[#19231f]/10 pb-3">
+        <!-- Blocked & Allowed Routes per User-Agent Group (Full Text Wrapping, No Scrollbars) -->
+        <div class="bento-card p-6 space-y-4 bg-[#fffdf8] overflow-hidden">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[#19231f]/10 pb-3">
             <div>
               <h3 class="font-display font-bold text-lg text-[#19231f]">
                 Blocked & Allowed Routes by User-Agent ({report.agentGroups?.length || 0} groups)
@@ -264,23 +272,23 @@
               <button
                 type="button"
                 onclick={() => (showRawRobots = !showRawRobots)}
-                class="px-3 py-1 rounded-full text-xs font-mono bg-[#f4f1e9] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f]/20 cursor-pointer"
+                class="px-3 py-1 rounded-full text-xs font-mono bg-[#f4f1e9] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f]/20 cursor-pointer shrink-0"
               >
-                {showRawRobots ? 'Hide Raw robots.txt' : 'View Raw File'}
+                {showRawRobots ? 'Hide Raw File' : 'View Raw File'}
               </button>
             {/if}
           </div>
 
           {#if showRawRobots && report.rawRobotsPreview}
-            <pre class="rounded-2xl bg-[#19231f] text-[#dffc78] p-4 text-xs font-mono max-h-64 scroll-panel overflow-x-auto">{report.rawRobotsPreview}</pre>
+            <pre class="rounded-2xl bg-[#19231f] text-[#dffc78] p-4 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{report.rawRobotsPreview}</pre>
           {/if}
 
           {#if report.agentGroups && report.agentGroups.length > 0}
-            <div class="space-y-3 max-h-[460px] scroll-panel pr-1">
+            <div class="space-y-3">
               {#each report.agentGroups as group}
-                <div class="rounded-2xl bg-[#f4f1e9] border border-[#19231f]/15 p-4 space-y-2.5">
-                  <div class="flex items-center justify-between">
-                    <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-[#19231f] text-[#dffc78]">
+                <div class="rounded-2xl bg-[#f4f1e9] border border-[#19231f]/15 p-4 space-y-2.5 min-w-0">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-[#19231f] text-[#dffc78] break-all whitespace-normal">
                       User-agent: {group.userAgent}
                     </span>
                     {#if group.crawlDelay}
@@ -291,14 +299,14 @@
                   </div>
 
                   {#if group.disallow && group.disallow.length > 0}
-                    <div class="space-y-1">
+                    <div class="space-y-1.5">
                       <div class="text-[10px] font-mono uppercase text-[#48534e]">
                         Blocked Routes (Disallow: {group.disallow.length})
                       </div>
                       <div class="flex flex-wrap gap-1.5">
                         {#each group.disallow as dPath}
-                          <span class="px-2.5 py-0.5 rounded-lg bg-[#ffc3a5]/70 border border-[#19231f]/25 text-xs font-mono text-[#19231f]">
-                            ✕ {dPath}
+                          <span class="px-2.5 py-1 rounded-lg bg-[#ffc3a5]/70 border border-[#19231f]/25 text-xs font-mono text-[#19231f] break-all whitespace-normal">
+                            {dPath}
                           </span>
                         {/each}
                       </div>
@@ -306,14 +314,14 @@
                   {/if}
 
                   {#if group.allow && group.allow.length > 0}
-                    <div class="space-y-1 pt-1">
+                    <div class="space-y-1.5 pt-1">
                       <div class="text-[10px] font-mono uppercase text-[#48534e]">
                         Allowed Exceptions (Allow: {group.allow.length})
                       </div>
                       <div class="flex flex-wrap gap-1.5">
                         {#each group.allow as aPath}
-                          <span class="px-2.5 py-0.5 rounded-lg bg-[#dffc78] border border-[#19231f]/25 text-xs font-mono text-[#19231f]">
-                            ✓ {aPath}
+                          <span class="px-2.5 py-1 rounded-lg bg-[#dffc78] border border-[#19231f]/25 text-xs font-mono text-[#19231f] break-all whitespace-normal">
+                            {aPath}
                           </span>
                         {/each}
                       </div>
@@ -330,8 +338,8 @@
         </div>
       </div>
 
-      <!-- Right 6-Col: Sitemap.xml Child Maps & Indexed URLs with Update Dates -->
-      <div class="lg:col-span-6 space-y-6">
+      <!-- Right 6-Col: Sitemap.xml Child Maps & Indexed URLs with Update Dates (No Nested Scrollbars) -->
+      <div class="lg:col-span-6 space-y-6 min-w-0">
         {#if report.childSitemaps && report.childSitemaps.length > 0}
           <div class="bento-card p-6 space-y-3 bg-[#fffdf8]">
             <div class="flex items-center justify-between border-b border-[#19231f]/10 pb-3">
@@ -340,16 +348,16 @@
               </h3>
               <span class="studio-label">&lt;sitemapindex&gt;</span>
             </div>
-            <div class="space-y-2 max-h-52 scroll-panel pr-1">
-              {#each report.childSitemaps as sm}
-                <div class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/12 p-3 flex items-center justify-between gap-2 text-xs font-mono">
+            <div class="space-y-2">
+              {#each report.childSitemaps.slice(0, 10) as sm}
+                <div class="rounded-xl bg-[#f4f1e9] border border-[#19231f]/12 p-3 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
                   <a
                     href={sm.loc}
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="text-[#5366e8] font-semibold truncate hover:underline"
+                    class="text-[#5366e8] font-semibold break-all hover:underline"
                   >
-                    {sm.path} ↗
+                    {sm.path}
                   </a>
                   <div class="flex items-center gap-2 shrink-0">
                     {#if sm.lastMod}
@@ -394,19 +402,19 @@
             />
           </div>
 
-          {#if filteredEntries.length > 0}
-            <div class="max-h-[520px] scroll-panel divide-y divide-[#19231f]/10">
-              {#each filteredEntries as entry}
+          {#if visibleEntries.length > 0}
+            <div class="divide-y divide-[#19231f]/10">
+              {#each visibleEntries as entry}
                 <div class="px-5 py-3.5 hover:bg-[#f4f1e9]/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div class="min-w-0 space-y-0.5">
                     <a
                       href={entry.loc}
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="font-mono text-xs font-bold text-[#5366e8] hover:underline block truncate"
+                      class="font-mono text-xs font-bold text-[#5366e8] hover:underline block break-all"
                       title={entry.loc}
                     >
-                      {entry.path || entry.loc} ↗
+                      {entry.path || entry.loc}
                     </a>
                     <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[#48534e]">
                       {#if entry.changeFreq}
@@ -418,7 +426,7 @@
                     </div>
                   </div>
 
-                  <div class="flex items-center gap-2 shrink-0">
+                  <div class="flex flex-wrap items-center gap-2 shrink-0">
                     {#if entry.lastMod}
                       <span class="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-[#dffc78] border border-[#19231f] text-[#19231f]">
                         {entry.lastMod}
@@ -455,6 +463,18 @@
                 </div>
               {/each}
             </div>
+
+            {#if filteredEntries.length > 18}
+              <div class="p-4 bg-[#f4f1e9] border-t border-[#19231f]/10 text-center">
+                <button
+                  type="button"
+                  onclick={() => (showAllEntries = !showAllEntries)}
+                  class="px-4 py-1.5 rounded-full text-xs font-display font-bold bg-[#fffdf8] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f] cursor-pointer"
+                >
+                  {showAllEntries ? 'Show Compact List (18)' : `Show All ${filteredEntries.length} Sitemap URLs`}
+                </button>
+              </div>
+            {/if}
           {:else}
             <div class="p-8 text-center text-xs text-[#48534e]">
               No XML sitemap entries found for this filter.

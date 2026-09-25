@@ -3,6 +3,7 @@
   import { motionCard } from '../motion';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import StudioIcon from './StudioIcon.svelte';
 
   interface Props {
     report: ReconReport | null;
@@ -26,9 +27,9 @@
     savedDomainsSet,
   }: Props = $props();
 
-  let targetInput = $state('supercoloring.com');
+  let targetInput = $state('svelte.dev');
 
-  const quickTargets = ['supercoloring.com', 'svelte.dev', 'golang.org', 'cloudflare.com'];
+  const quickTargets = ['svelte.dev', 'golang.org', 'cloudflare.com', 'linear.app'];
 
   $effect(() => {
     if (report?.domain) {
@@ -65,7 +66,7 @@
         <input
           type="text"
           bind:value={targetInput}
-          placeholder="Enter domain or host (e.g. supercoloring.com, svelte.dev)..."
+          placeholder="Enter domain or host (e.g. svelte.dev, golang.org)..."
           class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
         />
 
@@ -82,10 +83,11 @@
             type="button"
             disabled={loading}
             onclick={() => targetInput.trim() && onRunFullSuite(targetInput.trim())}
-            class="studio-btn-ink px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50"
+            class="studio-btn-ink inline-flex items-center gap-1.5 px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50"
             title="Run RDAP + Past History + Port Scan + Site Crawl all in parallel"
           >
-            ⚡ Run All 4 Engines in Parallel
+            <StudioIcon name="bolt" size={13} />
+            Run All 4 Engines in Parallel
           </button>
         </div>
       </div>
@@ -131,17 +133,19 @@
               href={report.liveSiteUrl || `https://${report.domain}`}
               target="_blank"
               rel="noopener noreferrer"
-              class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] hover:bg-[#e6fe8e] border border-[#19231f] text-[#19231f]"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] hover:bg-[#e6fe8e] border border-[#19231f] text-[#19231f]"
             >
-              ↗ Open Live Site
+              <StudioIcon name="external" size={12} />
+              Open Live Site
             </a>
             <a
               href={report.waybackCalendarUrl || `https://web.archive.org/web/*/${report.domain}`}
               target="_blank"
               rel="noopener noreferrer"
-              class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:opacity-90 border border-[#19231f] text-[#19231f]"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:opacity-90 border border-[#19231f] text-[#19231f]"
             >
-              🏛️ Wayback Machine ↗
+              <StudioIcon name="archive" size={12} />
+              Wayback Machine
             </a>
             <span class="text-xs font-mono text-[#48534e]">
               IP: <strong class="text-[#19231f]">{report.targetIp || 'Resolved'}</strong>
@@ -167,9 +171,10 @@
             <button
               type="button"
               onclick={() => onCheckHistory(report.domain)}
-              class="px-3.5 py-2 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer"
             >
-              ⏳ View Wayback Snapshots & Past History
+              <StudioIcon name="history" size={13} />
+              View Wayback Snapshots & Past History
             </button>
 
             <button

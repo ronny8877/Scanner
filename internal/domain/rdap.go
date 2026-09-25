@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -76,17 +77,41 @@ type rdapEntity struct {
 	Entities []rdapEntity `json:"entities"`
 }
 
-// InspectDomain performs a deep inquiry on a domain via DNS resolution and RDAP lookup.
+// InspectDomain performs a deep inquiry on a domain via parallel DNS resolution, RDAP, and Port-43 WHOIS lookup.
 func InspectDomain(ctx context.Context, rawDomain string) DomainInquiry {
 	start := time.Now()
 	cleanDomain := CleanDomainName(rawDomain)
 
-	dnsRecords := resolveDNS(ctx, cleanDomain)
+	var (
+		dnsRecords DNSRecords
+		rdapData   *rdapResponse
+		rdapErr    error
+		whoisRec   WhoisRecord
+		whoisErr   error
+		wg         sync.WaitGroup
+	)
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		dnsRecords = resolveDNS(ctx, cleanDomain)
+	}()
+	go func() {
+		defer wg.Done()
+		rdapData, _, rdapErr = fetchRDAP(ctx, cleanDomain)
+	}()
+	go func() {
+		defer wg.Done()
+		whoisRec, whoisErr = QueryWhois(ctx, cleanDomain)
+	}()
+	wg.Wait()
+
 	hasDNS := len(dnsRecords.NS) > 0 || len(dnsRecords.A) > 0 || len(dnsRecords.AAAA) > 0 || len(dnsRecords.MX) > 0
+	isRegistered := hasDNS || (rdapErr == nil && rdapData != nil) || (whoisErr == nil && whoisRec.Registered)
 
 	inquiry := DomainInquiry{
 		Domain:             cleanDomain,
-		Available:          !hasDNS,
+		Available:          !isRegistered,
 		StatusSummary:      "Available",
 		LiveSiteURL:        "https://" + cleanDomain,
 		WaybackCalendarURL: fmt.Sprintf("https://web.archive.org/web/*/%s", cleanDomain),
@@ -95,9 +120,7 @@ func InspectDomain(ctx context.Context, rawDomain string) DomainInquiry {
 		Nameservers:        dnsRecords.NS,
 	}
 
-	// Attempt RDAP query for authoritative registration dates & registrar details
-	rdapData, rdapStatus, err := fetchRDAP(ctx, cleanDomain)
-	if err == nil && rdapData != nil {
+	if rdapErr == nil && rdapData != nil {
 		inquiry.Available = false
 		inquiry.StatusSummary = "Registered"
 		inquiry.RegistryHandle = rdapData.Handle
@@ -132,14 +155,49 @@ func InspectDomain(ctx context.Context, rawDomain string) DomainInquiry {
 		}
 
 		inquiry.Registrar, inquiry.RegistrarIANA = extractRegistrar(rdapData.Entities)
-	} else if rdapStatus == http.StatusNotFound && !hasDNS {
-		inquiry.Available = true
-		inquiry.StatusSummary = "Available"
-	} else if hasDNS {
+	}
+
+	// Merge authoritative Port-43 WHOIS fields (essential for .co, .ai, .io, .gg, .so, and parked/lame-NS domains like agent.co)
+	if whoisErr == nil && whoisRec.Registered {
 		inquiry.Available = false
-		inquiry.StatusSummary = "Registered"
+		if inquiry.RegisteredAt == "" && whoisRec.CreatedDate != "" {
+			inquiry.RegisteredAt = whoisRec.CreatedDate
+			inquiry.DomainAge = computeHumanAge(whoisRec.CreatedDate)
+		}
+		if inquiry.UpdatedAt == "" && whoisRec.UpdatedDate != "" {
+			inquiry.UpdatedAt = whoisRec.UpdatedDate
+		}
+		if inquiry.ExpiresAt == "" && whoisRec.ExpiryDate != "" {
+			inquiry.ExpiresAt = whoisRec.ExpiryDate
+			inquiry.DaysToExpiry = computeDaysUntil(whoisRec.ExpiryDate)
+		}
+		if inquiry.Registrar == "" && whoisRec.Registrar != "" {
+			inquiry.Registrar = whoisRec.Registrar
+		}
+		if inquiry.RegistrarIANA == "" && whoisRec.RegistrarIANA != "" {
+			inquiry.RegistrarIANA = whoisRec.RegistrarIANA
+		}
+		if len(inquiry.Nameservers) == 0 && len(whoisRec.Nameservers) > 0 {
+			inquiry.Nameservers = whoisRec.Nameservers
+			inquiry.DNS.NS = whoisRec.Nameservers
+		}
+		if len(inquiry.StatusFlags) == 0 && len(whoisRec.StatusFlags) > 0 {
+			inquiry.StatusFlags = whoisRec.StatusFlags
+		}
+		if inquiry.DNSSEC == "" && whoisRec.DNSSEC != "" {
+			inquiry.DNSSEC = whoisRec.DNSSEC
+		}
+	}
+
+	if !inquiry.Available {
+		hasWebIP := len(dnsRecords.A) > 0 || len(dnsRecords.AAAA) > 0
+		if !hasWebIP {
+			inquiry.StatusSummary = "Registered (Parked / No Active A Record)"
+		} else {
+			inquiry.StatusSummary = "Registered"
+		}
 		if inquiry.Registrar == "" {
-			inquiry.Registrar = "Active DNS Delegation (Registry Direct)"
+			inquiry.Registrar = "Active Registry Delegation"
 		}
 	}
 
@@ -149,35 +207,47 @@ func InspectDomain(ctx context.Context, rawDomain string) DomainInquiry {
 }
 
 func fetchRDAP(ctx context.Context, domain string) (*rdapResponse, int, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 5000*time.Millisecond)
+	reqCtx, cancel := context.WithTimeout(ctx, 4500*time.Millisecond)
 	defer cancel()
 
-	url := fmt.Sprintf("https://rdap.org/domain/%s", domain)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, 0, err
+	parts := strings.Split(domain, ".")
+	tld := parts[len(parts)-1]
+
+	var candidateURLs []string
+	if directBase, ok := tldRDAPEndpoints[tld]; ok {
+		candidateURLs = append(candidateURLs, directBase+domain)
 	}
-	req.Header.Set("Accept", "application/rdap+json, application/json")
-	req.Header.Set("User-Agent", "Scanner-Domain-Intelligence/2.0")
+	candidateURLs = append(candidateURLs, fmt.Sprintf("https://rdap.org/domain/%s", domain))
 
 	client := &http.Client{
-		Timeout: 5000 * time.Millisecond,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, resp.StatusCode, fmt.Errorf("rdap status %d", resp.StatusCode)
+		Timeout: 4000 * time.Millisecond,
 	}
 
-	var parsed rdapResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, resp.StatusCode, err
+	for _, u := range candidateURLs {
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Accept", "application/rdap+json, application/json")
+		req.Header.Set("User-Agent", "Scanner-Domain-Intelligence/2.0")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			continue
+		}
+		var parsed rdapResponse
+		err = json.NewDecoder(resp.Body).Decode(&parsed)
+		resp.Body.Close()
+		if err == nil && parsed.LDHName != "" {
+			return &parsed, http.StatusOK, nil
+		}
 	}
-	return &parsed, resp.StatusCode, nil
+
+	return nil, http.StatusNotFound, fmt.Errorf("rdap not found")
 }
 
 func resolveDNS(ctx context.Context, domain string) DNSRecords {
@@ -287,8 +357,21 @@ func extractRegistrar(entities []rdapEntity) (name string, iana string) {
 	return "", ""
 }
 
+func parseRegistryDate(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02"} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, nil
+		}
+	}
+	if len(raw) >= 10 {
+		return time.Parse("2006-01-02", raw[:10])
+	}
+	return time.Time{}, fmt.Errorf("invalid date")
+}
+
 func computeHumanAge(isoDate string) string {
-	t, err := time.Parse(time.RFC3339, isoDate)
+	t, err := parseRegistryDate(isoDate)
 	if err != nil {
 		return ""
 	}
@@ -305,7 +388,7 @@ func computeHumanAge(isoDate string) string {
 }
 
 func computeDaysUntil(isoDate string) int {
-	t, err := time.Parse(time.RFC3339, isoDate)
+	t, err := parseRegistryDate(isoDate)
 	if err != nil {
 		return 0
 	}

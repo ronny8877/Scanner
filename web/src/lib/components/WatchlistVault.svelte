@@ -2,6 +2,7 @@
   import type { SavedDomain } from '../types';
   import { motionCard } from '../motion';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import StudioIcon from './StudioIcon.svelte';
 
   interface Props {
     items: SavedDomain[];
@@ -57,7 +58,7 @@
     >
       <div class="flex items-center justify-between">
         <h2 id="watchlist-vault-heading" class="studio-label">
-          05 // Persistent Saved Domains Vault & Watchlist
+          07 // Persistent Saved Domains Vault & Watchlist
         </h2>
         <span class="text-xs font-mono text-[#48534e]">Synced to data/watchlist.json</span>
       </div>
@@ -77,9 +78,10 @@
         />
         <button
           type="submit"
-          class="sm:col-span-3 studio-btn-primary py-3 px-4 text-xs cursor-pointer"
+          class="sm:col-span-3 studio-btn-primary inline-flex items-center justify-center gap-1.5 py-3 px-4 text-xs cursor-pointer"
         >
-          ★ Save to Vault
+          <StudioIcon name="bookmark" size={13} />
+          Save to Vault
         </button>
       </div>
 
@@ -128,7 +130,7 @@
           Re-Verify All {items.length} Saved Domains in <span class="font-serif-editorial font-normal text-3xl">parallel</span>
         </h3>
         <p class="mt-1 text-xs text-[#19231f]/80 leading-relaxed">
-          Concurrently checks live RDAP registration status and Wayback/CT past history for every saved domain.
+          Concurrently checks live RDAP/WHOIS registration status and Wayback/CT past history for every saved domain.
         </p>
       </div>
 
@@ -136,9 +138,10 @@
         type="button"
         disabled={rechecking || items.length === 0}
         onclick={onRecheckAll}
-        class="mt-4 studio-btn-primary w-full py-3 px-4 text-xs cursor-pointer disabled:opacity-50"
+        class="mt-4 studio-btn-primary inline-flex items-center justify-center gap-1.5 w-full py-3 px-4 text-xs cursor-pointer disabled:opacity-50"
       >
-        {rechecking ? 'Re-Verifying All Domains in Parallel…' : '⚡ Re-Verify All Saved Domains Now'}
+        <StudioIcon name="bolt" size={13} />
+        {rechecking ? 'Re-Verifying All Domains in Parallel…' : 'Re-Verify All Saved Domains Now'}
       </button>
     </div>
   </div>
@@ -150,7 +153,7 @@
       workers={Math.max(4, items.length * 2)}
       steps={[
         'Resolving Live DNS NS/A Delegation',
-        'Querying Authoritative RDAP Status',
+        'Querying Authoritative RDAP & WHOIS Status',
         'Checking Wayback & CT Past Registration Traces',
       ]}
     />
@@ -220,9 +223,10 @@
             <button
               type="button"
               onclick={() => onCheckHistory(item.domain)}
-              class="px-3 py-1.5 rounded-full text-xs font-display font-semibold bg-[#f4f1e9] hover:bg-[#ffc3a5] text-[#19231f] border border-[#19231f]/25 transition-colors cursor-pointer"
+              class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-display font-semibold bg-[#f4f1e9] hover:bg-[#ffc3a5] text-[#19231f] border border-[#19231f]/25 transition-colors cursor-pointer"
             >
-              ⏳ Past History
+              <StudioIcon name="history" size={12} />
+              Past History
             </button>
             <button
               type="button"

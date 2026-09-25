@@ -14,10 +14,10 @@
 
   let { report, loading, onRunMetaCheck, onCancelJob, onCrawlUrl }: Props = $props();
 
-  let targetInput = $state('bemee.in/@nyx');
+  let targetInput = $state('svelte.dev');
   let activePlatform = $state<'all' | 'discord' | 'telegram' | 'whatsapp' | 'facebook'>('all');
 
-  const sampleUrls = ['bemee.in/@nyx', 'svelte.dev', 'supercoloring.com', 'github.com'];
+  const sampleUrls = ['svelte.dev', 'github.com/sveltejs/svelte', 'golang.org', 'cloudflare.com'];
 
   $effect(() => {
     if (report?.targetUrl) {
@@ -42,7 +42,7 @@
           06 // Social Meta Tag Inspector, Platform Card Previews & Tracker Telemetry
         </h2>
         <p class="text-sm text-[#48534e] mt-1">
-          Preview how any domain or sub-route (`bemee.in/@nyx`) renders on <strong>Discord, Telegram, WhatsApp &amp; Facebook</strong>, audit OpenGraph tags, and inspect Ad Networks &amp; Analytics trackers.
+          Preview how any domain or sub-route renders on <strong>Discord, Telegram, WhatsApp &amp; Facebook</strong>, audit OpenGraph tags, and inspect Ad Networks &amp; Analytics trackers.
         </p>
       </div>
       <span class="px-3 py-1 rounded-full text-xs font-mono bg-[#d9d6fc] border border-[#19231f] font-bold">
@@ -54,7 +54,7 @@
       <input
         type="text"
         bind:value={targetInput}
-        placeholder="Enter any URL or profile path (e.g. bemee.in/@nyx, svelte.dev, supercoloring.com)..."
+        placeholder="Enter any URL or sub-path (e.g. svelte.dev, github.com/sveltejs/svelte, golang.org)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f]"
       />
       <button

@@ -453,7 +453,7 @@ function synthesizeDomainInquiry(raw: string): DomainInquiry {
 }
 
 function synthesizeHistoryReport(raw: string): HistoryReport {
-  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'supercoloring.com';
+  const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   const isVirgin = clean.includes('veltrix') || clean.includes('nexora');
   if (isVirgin) {
     return {
@@ -666,7 +666,7 @@ function synthesizeCrawlReport(rawUrl: string): CrawlReport {
 }
 
 function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
-  const host = rawTarget.replace(/^https?:\/\//, '').split('/')[0] || 'supercoloring.com';
+  const host = rawTarget.replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   return {
     targetUrl: `https://${host}`,
     host,
@@ -713,7 +713,7 @@ function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
 
 function synthesizeMetaSocialReport(rawTarget: string): MetaSocialReport {
   const clean = rawTarget.replace(/^https?:\/\//, '');
-  const host = clean.split('/')[0] || 'supercoloring.com';
+  const host = clean.split('/')[0] || 'svelte.dev';
   return {
     targetUrl: `https://${clean}`,
     finalUrl: `https://${clean}`,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Job } from '../types';
   import { motionCard } from '../motion';
+  import StudioIcon from './StudioIcon.svelte';
 
   interface Props {
     open: boolean;
@@ -12,7 +13,7 @@
   }
 
   let { open, jobs, onClose, onSelectJob, onDispatchParallelSuite, onCancelJob }: Props = $props();
-  let parallelTarget = $state('supercoloring.com');
+  let parallelTarget = $state('svelte.dev');
 
   const runningCount = $derived(jobs.filter((j) => j.status === 'RUNNING').length);
 
@@ -81,11 +82,12 @@
           <input
             type="text"
             bind:value={parallelTarget}
-            placeholder="Target domain (e.g. supercoloring.com)..."
+            placeholder="Target domain (e.g. svelte.dev, agent.co)..."
             class="flex-1 rounded-full bg-[#f4f1e9] border border-[#19231f]/25 px-4 py-2 text-xs font-mono text-[#19231f]"
           />
-          <button type="submit" class="studio-btn-primary px-4 py-2 text-xs cursor-pointer shrink-0">
-            ⚡ Dispatch Suite
+          <button type="submit" class="studio-btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-xs cursor-pointer shrink-0">
+            <StudioIcon name="bolt" size={12} />
+            Dispatch Suite
           </button>
         </div>
       </form>

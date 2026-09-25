@@ -145,9 +145,25 @@
   padding-inline-end: 2.75rem;
 }
 
+.scroll-panel,
+.no-scrollbar,
+pre,
+nav {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scroll-panel::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar,
+pre::-webkit-scrollbar,
+nav::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .scroll-panel {
   overflow-y: auto;
-  scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 

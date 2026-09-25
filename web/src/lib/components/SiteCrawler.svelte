@@ -15,7 +15,7 @@
 
   let { report, loading, onRunCrawl, onCancelJob, onInspectDomain }: Props = $props();
 
-  let targetUrl = $state('bemee.in/@nyx');
+  let targetUrl = $state('svelte.dev/docs/kit');
   let pagePreset = $state<string>('20');
   let customPages = $state<number>(60);
   let depthPreset = $state<string>('2');
@@ -26,7 +26,7 @@
   const maxDepth = $derived(depthPreset === 'custom' ? Math.max(1, Math.min(8, Number(customDepth) || 4)) : Number(depthPreset));
   const isAggressiveCrawl = $derived(maxPages > 35 || maxDepth > 3);
 
-  const sampleSites = ['bemee.in/@nyx', 'svelte.dev', 'supercoloring.com', 'golang.org'];
+  const sampleSites = ['svelte.dev/docs/kit', 'svelte.dev', 'golang.org', 'cloudflare.com'];
 
   $effect(() => {
     if (report?.seedPath) {
@@ -64,7 +64,7 @@
         03 // Live Site Cartography & Sub-URL Structural Tree Mapper
       </h2>
       <span class="text-xs font-mono text-[#48534e]">
-        Supports exact starting paths (e.g. <code>bemee.in/@nyx</code>) · Concurrent Link Graph
+        Supports exact starting paths (e.g. <code>svelte.dev/docs/kit</code>) · Concurrent Link Graph
       </span>
     </div>
 
@@ -73,7 +73,7 @@
         id="crawl-url"
         type="text"
         bind:value={targetUrl}
-        placeholder="Enter domain or exact starting URL path (e.g. bemee.in/@nyx, svelte.dev/docs)..."
+        placeholder="Enter domain or exact starting URL path (e.g. svelte.dev/docs/kit, golang.org/doc)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
       />
 

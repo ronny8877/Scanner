@@ -2,6 +2,7 @@
   import type { DomainInquiry } from '../types';
   import { motionCard } from '../motion';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import StudioIcon from './StudioIcon.svelte';
 
   interface Props {
     inquiry: DomainInquiry | null;
@@ -26,9 +27,9 @@
     onToggleSave,
     savedDomainsSet,
   }: Props = $props();
-  let domainInput = $state('supercoloring.com');
+  let domainInput = $state('svelte.dev');
 
-  const quickExamples = ['supercoloring.com', 'svelte.dev', 'golang.org', 'linear.app', 'veltrixhq.ai'];
+  const quickExamples = ['svelte.dev', 'agent.co', 'golang.org', 'linear.app', 'veltrixhq.ai'];
 
   $effect(() => {
     if (inquiry?.domain) {
@@ -80,7 +81,7 @@
           id="inspect-domain"
           type="text"
           bind:value={domainInput}
-          placeholder="Enter domain name (e.g. supercoloring.com, svelte.dev)..."
+          placeholder="Enter domain name (e.g. svelte.dev, agent.co)..."
           class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
         />
         <button
@@ -112,13 +113,13 @@
 
   {#if loading}
     <LoadingProgressBanner
-      title="Authoritative RDAP, DNSSEC & Zone Lookup"
+      title="Authoritative RDAP, WHOIS, DNSSEC & Zone Lookup"
       target={domainInput}
       workers={6}
       onCancel={onCancelJob}
       steps={[
         'Resolving Live DNS NS, A, AAAA, CNAME, PTR, MX & DMARC',
-        'Querying Authoritative ICANN RDAP Registry Endpoint',
+        'Querying Authoritative ICANN RDAP & TCP Port-43 WHOIS Registry',
         'Calculating Tenure, Expiry Countdown & Appraisal',
       ]}
     />
@@ -138,30 +139,33 @@
               href={inquiry.liveSiteUrl || `https://${inquiry.domain}`}
               target="_blank"
               rel="noopener noreferrer"
-              class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] hover:bg-[#e6fe8e] border border-[#19231f] text-[#19231f]"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] hover:bg-[#e6fe8e] border border-[#19231f] text-[#19231f]"
             >
-              ↗ Open Live Site
+              <StudioIcon name="external" size={12} />
+              Open Live Site
             </a>
 
             <a
               href={inquiry.waybackCalendarUrl || `https://web.archive.org/web/*/${inquiry.domain}`}
               target="_blank"
               rel="noopener noreferrer"
-              class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:opacity-90 border border-[#19231f] text-[#19231f]"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:opacity-90 border border-[#19231f] text-[#19231f]"
             >
-              🏛️ Wayback Machine ↗
+              <StudioIcon name="archive" size={12} />
+              Wayback Machine
             </a>
 
             <button
               type="button"
               onclick={() => onToggleSave(inquiry.domain, inquiry.available)}
-              class="px-3 py-1 rounded-full text-xs font-display font-bold border border-[#19231f] cursor-pointer {savedDomainsSet.has(
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold border border-[#19231f] cursor-pointer {savedDomainsSet.has(
                 inquiry.domain
               )
                 ? 'bg-[#19231f] text-[#dffc78]'
                 : 'bg-[#fffdf8] text-[#19231f] hover:bg-[#dffc78]'}"
             >
-              {savedDomainsSet.has(inquiry.domain) ? '★ Saved' : '☆ Save'}
+              <StudioIcon name="bookmark" size={12} />
+              {savedDomainsSet.has(inquiry.domain) ? 'Saved' : 'Save'}
             </button>
           </div>
         </div>
@@ -175,7 +179,7 @@
             <span
               class="px-4 py-1.5 rounded-full text-xs font-display font-bold uppercase bg-[#dffc78] text-[#19231f] border-[1.5px] border-[#19231f]"
             >
-              ★ Unclaimed ({inquiry.valuation.regFeeDisplay || '$12/yr'})
+              Unclaimed ({inquiry.valuation.regFeeDisplay || '$12/yr'})
             </span>
           {:else}
             <span
@@ -198,16 +202,17 @@
               No active NS delegation or registry lock detected — check past archive snapshots before registering.
             </p>
           {:else}
-            <p class="text-[#48534e]">Active DNS delegation verified across global nameservers.</p>
+            <p class="text-[#48534e]">Active DNS delegation or WHOIS registration verified across global registries.</p>
           {/if}
 
           <div class="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onclick={() => onCheckHistory(inquiry.domain)}
-              class="px-4 py-2 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] border-[1.5px] border-[#19231f] cursor-pointer"
+              class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffb490] text-[#19231f] border-[1.5px] border-[#19231f] cursor-pointer"
             >
-              ⏳ View Wayback Snapshots & Past History
+              <StudioIcon name="history" size={13} />
+              View Wayback Snapshots & Past History
             </button>
 
             <button
@@ -284,9 +289,10 @@
             <button
               type="button"
               onclick={() => onCheckHistory(inquiry.domain)}
-              class="studio-btn-primary px-4 py-2 text-xs cursor-pointer"
+              class="studio-btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-xs cursor-pointer"
             >
-              ⏳ Verify Past Ownership in Wayback & CT Logs →
+              <StudioIcon name="history" size={13} />
+              Verify Past Ownership in Wayback & CT Logs →
             </button>
           </div>
         {:else}

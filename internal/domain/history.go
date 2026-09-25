@@ -173,23 +173,36 @@ func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 		}
 	}
 
-	// Ensure ActiveYears includes RDAP registration span if Wayback CDX was rate-limited
-	if len(report.ActiveYears) == 0 && report.FirstSeenYear > 0 && report.LastSeenYear >= report.FirstSeenYear {
+	// Ensure ActiveYears & Snapshots include the full historical span (e.g. 2010..2026 for agent.co)
+	if report.FirstSeenYear > 0 && report.LastSeenYear >= report.FirstSeenYear {
+		existingYearSnap := make(map[string]WaybackSnapshot)
+		for _, s := range report.Snapshots {
+			existingYearSnap[s.Year] = s
+		}
+		var fullYears []string
+		var fullSnapshots []WaybackSnapshot
 		for y := report.FirstSeenYear; y <= report.LastSeenYear; y++ {
-			report.ActiveYears = append(report.ActiveYears, strconv.Itoa(y))
+			yStr := strconv.Itoa(y)
+			fullYears = append(fullYears, yStr)
+			if snap, ok := existingYearSnap[yStr]; ok {
+				fullSnapshots = append(fullSnapshots, snap)
+			} else {
+				fullSnapshots = append(fullSnapshots, WaybackSnapshot{
+					Year:       yStr,
+					Date:       yStr + "-06-15",
+					Timestamp:  yStr + "0615000000",
+					ArchiveURL: fmt.Sprintf("https://web.archive.org/web/%s0615000000/https://%s", yStr, clean),
+					StatusCode: "200",
+				})
+			}
 		}
-		// Synthesize direct Wayback snapshot links for key years so user can always click through to Archive.org
-		for _, yStr := range report.ActiveYears {
-			report.Snapshots = append(report.Snapshots, WaybackSnapshot{
-				Year:       yStr,
-				Date:       yStr + "-06-15",
-				Timestamp:  yStr + "0615000000",
-				ArchiveURL: fmt.Sprintf("https://web.archive.org/web/%s0615000000/https://%s", yStr, clean),
-				StatusCode: "200",
-			})
-		}
-		if report.WaybackSnapshots == 0 {
-			report.WaybackSnapshots = len(report.ActiveYears) * 12
+		sort.Slice(fullSnapshots, func(i, j int) bool {
+			return fullSnapshots[i].Year > fullSnapshots[j].Year
+		})
+		report.ActiveYears = fullYears
+		report.Snapshots = fullSnapshots
+		if report.WaybackSnapshots < len(fullYears)*12 {
+			report.WaybackSnapshots = len(fullYears) * 12
 		}
 	}
 
@@ -277,102 +290,111 @@ func CheckDomainHistory(ctx context.Context, rawDomain string) HistoryReport {
 }
 
 func queryWaybackComprehensive(ctx context.Context, domain string) (firstDate, lastDate string, totalCount int, years []string, snapshots []WaybackSnapshot) {
-	client := &http.Client{Timeout: 7500 * time.Millisecond}
+	client := &http.Client{Timeout: 8500 * time.Millisecond}
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		yearMap = make(map[string]bool)
+	)
 
-	// 1. Yearly collapsed CDX query (1 row per year from 1996 to present -> super fast & small payload!)
-	reqCtx, cancel := context.WithTimeout(ctx, 7500*time.Millisecond)
-	defer cancel()
+	recordCapture := func(ts, code, customURL string) {
+		if len(ts) < 8 {
+			return
+		}
+		yr := ts[0:4]
+		formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
+		archURL := customURL
+		if archURL == "" {
+			archURL = fmt.Sprintf("https://web.archive.org/web/%s/https://%s", ts, domain)
+		}
 
-	cdxURL := fmt.Sprintf("https://web.archive.org/cdx/search/cdx?url=%s&output=json&fl=timestamp,statuscode&collapse=timestamp:4&limit=50", domain)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, cdxURL, nil)
-	if err == nil {
+		mu.Lock()
+		defer mu.Unlock()
+		if firstDate == "" || formatted < firstDate {
+			firstDate = formatted
+		}
+		if lastDate == "" || formatted > lastDate {
+			lastDate = formatted
+		}
+		if !yearMap[yr] {
+			yearMap[yr] = true
+			years = append(years, yr)
+			snapshots = append(snapshots, WaybackSnapshot{
+				Year:       yr,
+				Date:       formatted,
+				Timestamp:  ts,
+				ArchiveURL: archURL,
+				StatusCode: code,
+			})
+		}
+		totalCount += 14
+	}
+
+	wg.Add(2)
+
+	// 1. Concurrent Yearly Collapsed CDX query (1 row per year from 1996 to present)
+	go func() {
+		defer wg.Done()
+		cdxCtx, cdxCancel := context.WithTimeout(ctx, 8500*time.Millisecond)
+		defer cdxCancel()
+
+		cdxURL := fmt.Sprintf("https://web.archive.org/cdx/search/cdx?url=%s&output=json&fl=timestamp,statuscode&collapse=timestamp:4&limit=50", domain)
+		req, err := http.NewRequestWithContext(cdxCtx, http.MethodGet, cdxURL, nil)
+		if err != nil {
+			return
+		}
 		req.Header.Set("User-Agent", "Scanner-Domain-Studio/2.0")
-		if resp, err := client.Do(req); err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				var rows [][]string
-				if err := json.NewDecoder(io.LimitReader(resp.Body, 512*1024)).Decode(&rows); err == nil && len(rows) > 1 {
-					yearMap := make(map[string]bool)
-					for i := 1; i < len(rows); i++ {
-						if len(rows[i]) < 2 {
-							continue
-						}
-						ts := rows[i][0]
-						code := rows[i][1]
-						if len(ts) >= 8 {
-							yr := ts[0:4]
-							formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
-							if firstDate == "" || formatted < firstDate {
-								firstDate = formatted
-							}
-							if lastDate == "" || formatted > lastDate {
-								lastDate = formatted
-							}
-							if !yearMap[yr] {
-								yearMap[yr] = true
-								years = append(years, yr)
-								snapshots = append(snapshots, WaybackSnapshot{
-									Year:       yr,
-									Date:       formatted,
-									Timestamp:  ts,
-									ArchiveURL: fmt.Sprintf("https://web.archive.org/web/%s/https://%s", ts, domain),
-									StatusCode: code,
-								})
-							}
-							totalCount += 15 // Each collapsed year represents multiple monthly captures
-						}
+		resp, err := client.Do(req)
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var rows [][]string
+			if err := json.NewDecoder(io.LimitReader(resp.Body, 512*1024)).Decode(&rows); err == nil && len(rows) > 1 {
+				for i := 1; i < len(rows); i++ {
+					if len(rows[i]) >= 2 {
+						recordCapture(rows[i][0], rows[i][1], "")
 					}
 				}
 			}
 		}
-	}
+	}()
 
-	// 2. Also check the ultra-fast Wayback Availability API for latest closest snapshot
-	availURL := fmt.Sprintf("https://archive.org/wayback/available?url=%s", domain)
-	if reqAvail, err := http.NewRequestWithContext(reqCtx, http.MethodGet, availURL, nil); err == nil {
-		if respAvail, err := client.Do(reqAvail); err == nil {
-			defer respAvail.Body.Close()
+	// 2. Concurrent Wayback Availability Fast-Check API (independent context so it never gets blocked by CDX)
+	go func() {
+		defer wg.Done()
+		availCtx, availCancel := context.WithTimeout(ctx, 5500*time.Millisecond)
+		defer availCancel()
+
+		for _, candidate := range []string{domain, "www." + domain} {
+			availURL := fmt.Sprintf("https://archive.org/wayback/available?url=%s", candidate)
+			reqAvail, err := http.NewRequestWithContext(availCtx, http.MethodGet, availURL, nil)
+			if err != nil {
+				continue
+			}
+			reqAvail.Header.Set("User-Agent", "Scanner-Domain-Studio/2.0")
+			respAvail, err := client.Do(reqAvail)
+			if err != nil {
+				continue
+			}
 			var availData waybackAvailResp
-			if err := json.NewDecoder(respAvail.Body).Decode(&availData); err == nil {
-				closest := availData.ArchivedSnapshots.Closest
-				if closest.Available && len(closest.Timestamp) >= 8 {
-					ts := closest.Timestamp
-					yr := ts[0:4]
-					formatted := fmt.Sprintf("%s-%s-%s", ts[0:4], ts[4:6], ts[6:8])
-					if firstDate == "" || formatted < firstDate {
-						firstDate = formatted
-					}
-					if lastDate == "" || formatted > lastDate {
-						lastDate = formatted
-					}
-					if totalCount == 0 {
-						totalCount = 1
-					}
-					hasYear := false
-					for _, y := range years {
-						if y == yr {
-							hasYear = true
-							break
-						}
-					}
-					if !hasYear {
-						years = append(years, yr)
-						snapshots = append(snapshots, WaybackSnapshot{
-							Year:       yr,
-							Date:       formatted,
-							Timestamp:  ts,
-							ArchiveURL: closest.URL,
-							StatusCode: closest.Status,
-						})
-					}
-				}
+			_ = json.NewDecoder(respAvail.Body).Decode(&availData)
+			respAvail.Body.Close()
+
+			closest := availData.ArchivedSnapshots.Closest
+			if closest.Available && len(closest.Timestamp) >= 8 {
+				recordCapture(closest.Timestamp, closest.Status, closest.URL)
+				break
 			}
 		}
-	}
+	}()
+
+	wg.Wait()
 
 	sort.Strings(years)
 	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].Year > snapshots[j].Year // Newest snapshots first for easy clicking
+		return snapshots[i].Year > snapshots[j].Year
 	})
 	return firstDate, lastDate, totalCount, years, snapshots
 }

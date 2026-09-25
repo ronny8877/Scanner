@@ -9,6 +9,7 @@
   import WatchlistVault from './lib/components/WatchlistVault.svelte';
   import HistoryModal from './lib/components/HistoryModal.svelte';
   import JobQueueDrawer from './lib/components/JobQueueDrawer.svelte';
+  import StudioIcon from './lib/components/StudioIcon.svelte';
   import {
     checkBackendHealth,
     runDomainScan,
@@ -91,28 +92,28 @@
       badge: '24 TLDs',
       badgeBg: 'bg-[#dffc78]',
       desc: 'Scan curated dictionary packs across 24 TLDs with calibrated registrar & flip pricing.',
-      cmd: './bin/scanner veltrix --available --tlds com,ai,io,dev',
+      cmd: './bin/scanner --dict ai_agents --tlds com,ai,io,dev,co',
     },
     {
       label: '02 · Past History',
-      badge: 'Wayback + RDAP',
+      badge: 'Wayback + WHOIS',
       badgeBg: 'bg-[#ffc3a5]',
-      desc: 'Inspect Wayback yearly snapshots, RDAP creation date, and historical TLS logs.',
-      cmd: './bin/scanner history supercoloring.com',
+      desc: 'Inspect Wayback yearly snapshots, WHOIS/RDAP creation date, and historical TLS logs.',
+      cmd: './bin/scanner history agent.co',
     },
     {
       label: '03 · Sub-URL Site Tree',
       badge: 'Path Crawler',
       badgeBg: 'bg-[#dffc78]',
-      desc: 'Crawl starting from a specific profile or route (e.g. bemee.in/@nyx) and map its tree.',
-      cmd: './bin/scanner crawl bemee.in/@nyx --pages 20 --depth 2',
+      desc: 'Crawl starting from a specific documentation or app route and map its hierarchy tree.',
+      cmd: './bin/scanner crawl svelte.dev/docs/kit --pages 20 --depth 2',
     },
     {
       label: '04 · Port & Ad Radar',
       badge: '28 Workers',
       badgeBg: 'bg-[#d9d6fc]',
       desc: 'Probe 14 TCP ports, TLS SANs, HTTP headers, and detect Ad Networks & Analytics.',
-      cmd: './bin/scanner recon supercoloring.com',
+      cmd: './bin/scanner recon svelte.dev',
     },
   ];
 
@@ -362,20 +363,20 @@
 </script>
 
 <div class="min-h-dvh flex flex-col pb-16">
-  <!-- RESPONSIVE FLOATING NAVIGATION -->
+  <!-- RESPONSIVE FLOATING NAVIGATION (Zero Scrollbars, Stable Width During Active Jobs) -->
   <div class="sticky top-3 z-40 px-3 sm:px-6">
     <header
-      class="mx-auto max-w-7xl rounded-2xl xl:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3 py-2.5 xl:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2.5"
+      class="mx-auto max-w-7xl rounded-2xl xl:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3.5 py-2.5 xl:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2 overflow-hidden"
     >
       <!-- Brand + Mobile Actions -->
-      <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center justify-between gap-2 shrink-0">
         <a
           href="#top"
           onclick={(e) => {
             e.preventDefault();
             activeMode = 'scan';
           }}
-          class="flex items-center gap-2 pl-1.5 pr-3 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors shrink-0"
+          class="flex items-center gap-2 pl-1 pr-2.5 py-1 rounded-full hover:bg-[#f4f1e9] transition-colors shrink-0"
         >
           <span
             class="w-7 h-7 rounded-full bg-[#19231f] text-[#dffc78] flex items-center justify-center font-mono text-sm font-bold shrink-0"
@@ -395,7 +396,7 @@
               onclick={() => handleCancelJob()}
               class="px-2.5 py-1 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] text-[#19231f] border border-[#19231f] cursor-pointer"
             >
-              ✕ Stop Job
+              ✕ Stop
             </button>
           {/if}
 
@@ -405,25 +406,26 @@
               await refreshJobs();
               jobQueueOpen = true;
             }}
-            class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] text-[#19231f] border border-[#19231f] cursor-pointer flex items-center gap-1"
+            class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] text-[#19231f] border border-[#19231f] cursor-pointer inline-flex items-center gap-1.5"
           >
-            <span>⚡ Queue ({jobList.length})</span>
-            {#if runningJobsCount > 0}
+            <StudioIcon name="bolt" size={12} />
+            <span>Queue ({jobList.length})</span>
+            {#if anyJobRunning}
               <span class="w-2 h-2 rounded-full bg-[#19231f] animate-ping"></span>
             {/if}
           </button>
         </div>
       </div>
 
-      <!-- Single-Row Horizontally Scrollable Mode Strip -->
+      <!-- Mode Strip: Flex-Wrap on Mobile/Tablet, Compact Single Row on Desktop (NEVER scrolls horizontally) -->
       <nav
         aria-label="Primary Studio Modes"
-        class="w-full xl:w-auto flex items-center gap-1 overflow-x-auto whitespace-nowrap bg-[#f4f1e9] p-1 rounded-full border border-[#19231f]/15"
+        class="w-full xl:w-auto flex flex-wrap xl:flex-nowrap items-center justify-center gap-1 bg-[#f4f1e9] p-1 rounded-2xl xl:rounded-full border border-[#19231f]/15 overflow-hidden"
       >
         <button
           type="button"
           onclick={() => (activeMode = 'scan')}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'scan'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -435,9 +437,9 @@
           type="button"
           onclick={() => {
             activeMode = 'inspect';
-            if (!inquiryData) handleInspectDomain('supercoloring.com');
+            if (!inquiryData) handleInspectDomain('svelte.dev');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'inspect'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -449,9 +451,9 @@
           type="button"
           onclick={() => {
             activeMode = 'crawl';
-            if (!crawlReport) handleCrawlDomain('bemee.in/@nyx');
+            if (!crawlReport) handleCrawlDomain('svelte.dev/docs/kit');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'crawl'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -463,9 +465,9 @@
           type="button"
           onclick={() => {
             activeMode = 'recon';
-            if (!reconReport) handleRunRecon('supercoloring.com');
+            if (!reconReport) handleRunRecon('svelte.dev');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'recon'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -477,9 +479,9 @@
           type="button"
           onclick={() => {
             activeMode = 'robots';
-            if (!robotsReport) handleRunRobotsCheck('supercoloring.com');
+            if (!robotsReport) handleRunRobotsCheck('svelte.dev');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'robots'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -491,9 +493,9 @@
           type="button"
           onclick={() => {
             activeMode = 'meta';
-            if (!metaReport) handleRunMetaCheck('bemee.in/@nyx');
+            if (!metaReport) handleRunMetaCheck('svelte.dev');
           }}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
           'meta'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -504,7 +506,7 @@
         <button
           type="button"
           onclick={() => (activeMode = 'vault')}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer inline-flex items-center gap-1.5 shrink-0 {activeMode ===
           'vault'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -520,16 +522,16 @@
         </button>
       </nav>
 
-      <!-- Desktop Right Actions -->
-      <div class="hidden xl:flex items-center gap-2 shrink-0">
+      <!-- Desktop Right Actions: Unified Capsule so Running Jobs NEVER Expand Width or Trigger Scrollbars -->
+      <div class="hidden xl:flex items-center gap-1.5 shrink-0">
         {#if anyJobRunning}
           <button
             type="button"
             onclick={() => handleCancelJob()}
-            class="px-3 py-1.5 rounded-full text-xs font-display font-bold bg-[#ffc3a5] hover:bg-[#ffad85] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer"
+            class="px-2.5 py-1.5 rounded-full text-[11px] font-display font-bold bg-[#ffc3a5] hover:bg-[#ffad85] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer shrink-0"
             title="Cancel currently running background job"
           >
-            ✕ Cancel Job
+            ✕ Stop
           </button>
         {/if}
 
@@ -539,11 +541,12 @@
             await refreshJobs();
             jobQueueOpen = true;
           }}
-          class="px-3.5 py-1.5 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:bg-[#c8c3fa] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer flex items-center gap-1.5"
+          class="px-3 py-1.5 rounded-full text-xs font-display font-bold bg-[#d9d6fc] hover:bg-[#c8c3fa] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer inline-flex items-center gap-1.5 shrink-0"
           title="Open Enterprise Job & Worker Queue"
         >
-          <span>⚡ Queue ({jobList.length})</span>
-          {#if runningJobsCount > 0}
+          <StudioIcon name="bolt" size={12} />
+          <span>Queue ({jobList.length})</span>
+          {#if anyJobRunning}
             <span class="w-2 h-2 rounded-full bg-[#19231f] animate-ping"></span>
           {/if}
         </button>
@@ -551,10 +554,10 @@
         <button
           type="button"
           onclick={copyCliCommand}
-          class="studio-btn-primary px-4 py-1.5 text-xs cursor-pointer flex items-center gap-1.5"
+          class="studio-btn-primary px-3.5 py-1.5 text-xs cursor-pointer inline-flex items-center gap-1.5 shrink-0"
           title="Copy active Go CLI command"
         >
-          <span>{copiedCli ? '✓ CLI Copied' : 'Copy CLI Cmd'}</span>
+          <span>{copiedCli ? '✓ Copied' : 'Copy CLI'}</span>
         </button>
       </div>
     </header>
@@ -574,7 +577,7 @@
           ></span>
           <span class="truncate text-[#19231f]">
             {backendOnline
-              ? 'Go Parallel Engine Online (:8080) · 24 TLDs · Robots/Sitemap · Social Meta & Ad Radar'
+              ? 'Go Parallel Engine Online (:8080) · 24 TLDs · WHOIS + RDAP · Robots/Sitemap · Social Meta'
               : 'Standalone Studio · Run `./bin/scanner serve` for live sockets'}
           </span>
         </div>
@@ -584,7 +587,7 @@
         </h1>
 
         <p class="text-sm sm:text-base text-[#48534e] max-w-2xl leading-relaxed">
-          Editorial domain intelligence &amp; surface reconnaissance studio: 24-TLD dictionary search, sub-route site cartography (`bemee.in/@nyx`), `robots.txt` &amp; `sitemap.xml` inspector, Discord/Telegram/WhatsApp card previews, and Ad Network / Analytics telemetry.
+          Editorial domain intelligence &amp; surface reconnaissance studio: 24-TLD dictionary search, authoritative RDAP &amp; Port-43 WHOIS verification, sub-route site cartography (`svelte.dev/docs/kit`), `robots.txt` &amp; `sitemap.xml` inspector, and social card previews.
         </p>
       </div>
 

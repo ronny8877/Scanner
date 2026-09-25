@@ -72,7 +72,7 @@ var (
 	reTags  = regexp.MustCompile(`<[^>]*>`)
 )
 
-// CrawlSite crawls a domain or specific sub-URL (e.g. bemee.in/@nyx) and builds its hierarchical structure tree.
+// CrawlSite crawls a domain or specific sub-URL (e.g. svelte.dev/docs/kit) and builds its hierarchical structure tree.
 func CrawlSite(ctx context.Context, opts CrawlOptions) CrawlReport {
 	start := time.Now()
 	if opts.MaxPages <= 0 {

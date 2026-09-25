@@ -9,113 +9,109 @@ import (
 	"time"
 )
 
-// ScanOptions configures a bulk domain availability & value discovery scan.
+// ScanOptions configures a bulk domain availability & valuation scan.
 type ScanOptions struct {
 	Keywords       []string `json:"keywords"`
 	TLDs           []string `json:"tlds"`
-	DictionaryPack string   `json:"dictionaryPack,omitempty"` // Optional built-in dictionary pack ID
-	Mutations      bool     `json:"mutations"`                // Generate brandable prefix/suffix combinations
-	OnlyAvailable  bool     `json:"onlyAvailable"`            // Filter results to only available (empty) domains
-	MinScore       int      `json:"minScore"`                 // Minimum valuation score (0-100)
-	Concurrency    int      `json:"concurrency"`              // Worker pool size
+	DictionaryPack string   `json:"dictionaryPack,omitempty"`
+	Mutations      bool     `json:"mutations"`
+	OnlyAvailable  bool     `json:"onlyAvailable"`
+	MinScore       int      `json:"minScore"`
+	Concurrency    int      `json:"concurrency"`
 	MaxResults     int      `json:"maxResults"`
 }
 
-// ScanResultItem represents one scanned domain candidate with availability and valuation.
+// ScanResultItem holds availability, registry metadata, and valuation for a single domain candidate.
 type ScanResultItem struct {
-	Domain        string    `json:"domain"`
-	RootName      string    `json:"rootName"`
-	TLD           string    `json:"tld"`
-	Available     bool      `json:"available"`
-	Status        string    `json:"status"` // "Available" | "Registered"
-	RegisteredAt  string    `json:"registeredAt,omitempty"`
-	Registrar     string    `json:"registrar,omitempty"`
-	Nameservers   []string  `json:"nameservers,omitempty"`
-	Valuation     Valuation `json:"valuation"`
-	LatencyMs     int64     `json:"latencyMs"`
+	Domain       string    `json:"domain"`
+	RootName     string    `json:"rootName"`
+	TLD          string    `json:"tld"`
+	Available    bool      `json:"available"`
+	Status       string    `json:"status"` // "Available" | "Registered"
+	RegisteredAt string    `json:"registeredAt,omitempty"`
+	Registrar    string    `json:"registrar,omitempty"`
+	Nameservers  []string  `json:"nameservers,omitempty"`
+	Valuation    Valuation `json:"valuation"`
+	LatencyMs    int64     `json:"latencyMs"`
 }
 
-// ScanReport aggregates the full scan run statistics and sorted items.
+// ScanReport aggregates the full parallel scan execution report.
 type ScanReport struct {
 	SeedKeywords   []string         `json:"seedKeywords"`
 	DictionaryUsed string           `json:"dictionaryUsed,omitempty"`
 	TotalChecked   int              `json:"totalChecked"`
 	AvailableCount int              `json:"availableCount"`
 	TakenCount     int              `json:"takenCount"`
-	HighValueCount int              `json:"highValueCount"` // Available domains with score >= 73
+	HighValueCount int              `json:"highValueCount"`
 	DurationMs     int64            `json:"durationMs"`
 	Items          []ScanResultItem `json:"items"`
 }
 
-var defaultTLDs = []string{"com", "ai", "io", "dev", "co", "app"}
+var (
+	brandPrefixes = []string{"get", "use", "try", "go", "open", "my", "hey"}
+	brandSuffixes = []string{"hq", "labs", "studio", "ai", "cloud", "app", "flow", "hub", "ops", "dev"}
+)
 
-var brandPrefixes = []string{"get", "try", "use", "go", "open"}
-var brandSuffixes = []string{"hq", "labs", "flow", "pulse", "hub", "core", "grid", "cloud", "sync", "base", "studio", "ai"}
-
-// ScanDomains generates domain candidates from keywords/dictionary and checks their availability & value concurrently.
+// ScanDomains generates domain candidates (from seed keywords and/or dictionary packs) and checks availability in parallel.
 func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 	start := time.Now()
-
 	if len(opts.TLDs) == 0 {
-		opts.TLDs = defaultTLDs
+		opts.TLDs = []string{"com", "ai", "io", "dev", "co", "app"}
 	}
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 18
 	}
 	if opts.MaxResults <= 0 {
-		opts.MaxResults = 64
+		opts.MaxResults = 72
+	}
+	if opts.DictionaryPack != "" && opts.DictionaryPack != "none" && opts.MaxResults < 84 {
+		opts.MaxResults = 84
 	}
 
 	candidates := generateCandidates(opts.Keywords, opts.TLDs, opts.DictionaryPack, opts.Mutations, opts.MaxResults)
+	results := make([]ScanResultItem, len(candidates))
 
-	type job struct {
-		domain string
-	}
-
-	jobCh := make(chan job, len(candidates))
-	resCh := make(chan ScanResultItem, len(candidates))
-
+	sem := make(chan struct{}, opts.Concurrency)
 	var wg sync.WaitGroup
-	workers := opts.Concurrency
-	if workers > len(candidates) && len(candidates) > 0 {
-		workers = len(candidates)
-	}
 
-	for i := 0; i < workers; i++ {
+	for idx, cand := range candidates {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
 		wg.Add(1)
-		go func() {
+		go func(i int, fullDomain string) {
 			defer wg.Done()
-			for j := range jobCh {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					resCh <- checkSingleDomainFast(ctx, j.domain)
-				}
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
 			}
-		}()
+			results[i] = checkSingleDomainAuthoritative(ctx, fullDomain)
+		}(idx, cand)
 	}
-
-	for _, c := range candidates {
-		jobCh <- job{domain: c}
-	}
-	close(jobCh)
 	wg.Wait()
-	close(resCh)
 
-	var allItems []ScanResultItem
-	availableCount := 0
-	takenCount := 0
-	highValueCount := 0
+	var (
+		allItems       []ScanResultItem
+		availableCount int
+		takenCount     int
+		highValueCount int
+	)
 
-	for item := range resCh {
+	for _, item := range results {
+		if item.Domain == "" {
+			continue
+		}
 		if item.Available {
 			availableCount++
-			if item.Valuation.Score >= 73 {
-				highValueCount++
-			}
 		} else {
 			takenCount++
+		}
+		if item.Valuation.Score >= 82 {
+			highValueCount++
 		}
 
 		if opts.OnlyAvailable && !item.Available {
@@ -127,8 +123,29 @@ func ScanDomains(ctx context.Context, opts ScanOptions) ScanReport {
 		allItems = append(allItems, item)
 	}
 
-	// Sort: Available domains first, then by highest valuation score descending, then shortest length
-	sort.Slice(allItems, func(i, j int) bool {
+	// Sort: Exact user inputs & dictionary words first, then Available domains, then by Valuation Score descending
+	seedSet := make(map[string]bool)
+	for _, kw := range opts.Keywords {
+		cleanKw := strings.ToLower(strings.TrimSpace(kw))
+		if cleanKw != "" {
+			seedSet[cleanKw] = true
+			if !strings.Contains(cleanKw, ".") {
+				for _, t := range opts.TLDs {
+					seedSet[cleanKw+"."+strings.TrimPrefix(strings.ToLower(t), ".")] = true
+				}
+			}
+		}
+	}
+
+	sort.SliceStable(allItems, func(i, j int) bool {
+		iExact := seedSet[allItems[i].Domain]
+		jExact := seedSet[allItems[j].Domain]
+		if iExact != jExact {
+			return iExact
+		}
+		if allItems[i].Valuation.IsDictionaryWord != allItems[j].Valuation.IsDictionaryWord && opts.DictionaryPack != "" && opts.DictionaryPack != "none" {
+			return allItems[i].Valuation.IsDictionaryWord
+		}
 		if allItems[i].Available != allItems[j].Available {
 			return allItems[i].Available
 		}
@@ -169,7 +186,7 @@ func generateCandidates(keywords []string, tlds []string, dictPack string, mutat
 
 	dictWords := GetDictionaryWords(dictPack)
 
-	// 1. Exact user keywords across all requested TLDs
+	// 1. Exact user keywords across requested TLDs
 	for _, rawKw := range keywords {
 		rawKw = strings.ToLower(strings.TrimSpace(rawKw))
 		if rawKw == "" {
@@ -184,33 +201,36 @@ func generateCandidates(keywords []string, tlds []string, dictPack string, mutat
 			}
 			continue
 		}
-
 		for _, t := range tlds {
 			addCandidate(rawKw, t)
 		}
-
-		// If dictionary pack is active, combine user seed + dictionary word (e.g. "nova" + "loom" -> "novaloom.com")
-		if len(dictWords) > 0 {
-			topTLDs := tlds
-			if len(topTLDs) > 3 {
-				topTLDs = topTLDs[:3]
-			}
-			for i, dw := range dictWords {
-				if i >= 12 {
-					break
-				}
-				for _, t := range topTLDs {
-					addCandidate(rawKw+dw, t)
-				}
-			}
-		}
 	}
 
-	// 2. Dictionary words themselves across requested TLDs
+	// 2. If a Dictionary Pack is selected, immediately prioritize pure dictionary words across the top TLDs
 	if len(dictWords) > 0 {
+		dictTLDs := tlds
+		if len(dictTLDs) > 4 {
+			dictTLDs = dictTLDs[:4]
+		}
 		for _, dw := range dictWords {
-			for _, t := range tlds {
+			for _, t := range dictTLDs {
 				addCandidate(dw, t)
+			}
+		}
+
+		// Also combine user seed + dictionary word (e.g. "nova" + "loom" -> "novaloom.com")
+		for _, rawKw := range keywords {
+			cleanRoot := sanitizeLabel(strings.Split(rawKw, ".")[0])
+			if cleanRoot == "" {
+				continue
+			}
+			for i, dw := range dictWords {
+				if i >= 10 {
+					break
+				}
+				for _, t := range dictTLDs[:minInt(2, len(dictTLDs))] {
+					addCandidate(cleanRoot+dw, t)
+				}
 			}
 		}
 	}
@@ -222,7 +242,7 @@ func generateCandidates(keywords []string, tlds []string, dictPack string, mutat
 			primaryTLDs = primaryTLDs[:4]
 		}
 		for _, rawKw := range keywords {
-			rawKw = sanitizeLabel(rawKw)
+			rawKw = sanitizeLabel(strings.Split(rawKw, ".")[0])
 			if rawKw == "" {
 				continue
 			}
@@ -242,7 +262,9 @@ func generateCandidates(keywords []string, tlds []string, dictPack string, mutat
 	return list
 }
 
-func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultItem {
+// checkSingleDomainAuthoritative checks DNS (NS + A/AAAA + SERVFAIL detection) and falls back to TCP Port-43 WHOIS
+// so parked/squatted domains without A/AAAA records (like agent.co) are never falsely marked Available.
+func checkSingleDomainAuthoritative(ctx context.Context, fullDomain string) ScanResultItem {
 	start := time.Now()
 	parts := strings.SplitN(fullDomain, ".", 2)
 	root := parts[0]
@@ -251,14 +273,21 @@ func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultIte
 		tld = parts[1]
 	}
 
-	dnsCtx, cancel := context.WithTimeout(ctx, 1800*time.Millisecond)
+	dnsCtx, cancel := context.WithTimeout(ctx, 1600*time.Millisecond)
 	defer cancel()
 
 	r := net.DefaultResolver
 	var nameservers []string
+	dnsServFail := false
+
 	if nss, err := r.LookupNS(dnsCtx, fullDomain); err == nil && len(nss) > 0 {
 		for _, ns := range nss {
 			nameservers = append(nameservers, strings.TrimSuffix(strings.ToLower(ns.Host), "."))
+		}
+	} else if err != nil {
+		if dnsErr, ok := err.(*net.DNSError); ok && !dnsErr.IsNotFound {
+			// SERVFAIL / timeout in TLD zone means the domain IS delegated in the registry with lame/parked nameservers!
+			dnsServFail = true
 		}
 	}
 
@@ -270,6 +299,24 @@ func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultIte
 	}
 
 	registered := len(nameservers) > 0 || hasIP
+	var registeredAt, registrar string
+
+	// If DNS returned no active NS/IP (or returned SERVFAIL like agent.co), verify with Port-43 WHOIS
+	if !registered {
+		whoisCtx, whoisCancel := context.WithTimeout(ctx, 2200*time.Millisecond)
+		if wRec, wErr := QueryWhois(whoisCtx, fullDomain); wErr == nil && wRec.Registered {
+			registered = true
+			registeredAt = wRec.CreatedDate
+			registrar = wRec.Registrar
+			nameservers = wRec.Nameservers
+		} else if dnsServFail {
+			// Even if WHOIS rate-limits, a TLD zone SERVFAIL (not NXDOMAIN) indicates an existing registration delegation
+			registered = true
+			registrar = "Registered (Lame / Parked Nameservers)"
+		}
+		whoisCancel()
+	}
+
 	status := "Available"
 	if registered {
 		status = "Registered"
@@ -278,14 +325,16 @@ func checkSingleDomainFast(ctx context.Context, fullDomain string) ScanResultIte
 	val := EvaluateDomainWithStatus(fullDomain, !registered)
 
 	return ScanResultItem{
-		Domain:      fullDomain,
-		RootName:    root,
-		TLD:         tld,
-		Available:   !registered,
-		Status:      status,
-		Nameservers: nameservers,
-		Valuation:   val,
-		LatencyMs:   time.Since(start).Milliseconds(),
+		Domain:       fullDomain,
+		RootName:     root,
+		TLD:          tld,
+		Available:    !registered,
+		Status:       status,
+		RegisteredAt: registeredAt,
+		Registrar:    registrar,
+		Nameservers:  nameservers,
+		Valuation:    val,
+		LatencyMs:    time.Since(start).Milliseconds(),
 	}
 }
 
@@ -297,4 +346,11 @@ func sanitizeLabel(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

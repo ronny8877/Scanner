@@ -2,6 +2,7 @@
   import type { HistoryReport } from '../types';
   import { motionCard } from '../motion';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
+  import StudioIcon from './StudioIcon.svelte';
 
   interface Props {
     open: boolean;
@@ -33,7 +34,7 @@
         <div class="flex items-center gap-2.5">
           <span class="w-2.5 h-2.5 rounded-full bg-[#dffc78]"></span>
           <span id="history-modal-title" class="font-display font-bold text-sm uppercase tracking-wider text-[#dffc78]">
-            Past Registration & Archive History (Wayback + RDAP + CT Logs)
+            Past Registration & Archive History (Wayback + RDAP + WHOIS + CT Logs)
           </span>
         </div>
 
@@ -42,17 +43,19 @@
             href={`https://${targetDomain}`}
             target="_blank"
             rel="noopener noreferrer"
-            class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] text-[#19231f] hover:bg-[#e6fe8e] transition-colors"
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#dffc78] text-[#19231f] hover:bg-[#e6fe8e] transition-colors"
           >
-            ↗ Open Live Site
+            <StudioIcon name="external" size={12} />
+            Open Live Site
           </a>
           <a
             href={`https://web.archive.org/web/*/${targetDomain}`}
             target="_blank"
             rel="noopener noreferrer"
-            class="px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] text-[#19231f] hover:opacity-90 transition-colors"
+            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-display font-bold bg-[#d9d6fc] text-[#19231f] hover:opacity-90 transition-colors"
           >
-            🏛️ Wayback Calendar ↗
+            <StudioIcon name="archive" size={12} />
+            Wayback Calendar
           </a>
           <button
             type="button"
@@ -74,7 +77,7 @@
             onCancel={onCancelJob}
             steps={[
               'Querying Wayback Machine Yearly CDX & Availability API',
-              'Checking Authoritative RDAP Creation Date & Registrar',
+              'Checking Authoritative RDAP & TCP Port-43 WHOIS Registration Date',
               'Scanning crt.sh Certificate Transparency Subdomains',
             ]}
           />
@@ -96,7 +99,7 @@
                   </span>
                 {:else}
                   <span class="px-3 py-1 rounded-full text-xs font-display font-bold uppercase bg-[#dffc78] border border-[#19231f] text-[#19231f]">
-                    ★ Clean Virgin History
+                    Clean Virgin History
                   </span>
                 {/if}
               </div>
@@ -110,9 +113,10 @@
                 href={report.waybackCalendarUrl || `https://web.archive.org/web/*/${report.domain}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="studio-btn-primary px-4 py-1.5 text-xs text-center"
+                class="studio-btn-primary inline-flex items-center gap-1.5 px-4 py-1.5 text-xs text-center"
               >
-                🏛️ View Old Snapshots on Wayback ↗
+                <StudioIcon name="archive" size={13} />
+                View Old Snapshots on Wayback
               </a>
               <span class="font-mono text-[11px] text-[#48534e]">Resolved in {report.checkLatencyMs}ms</span>
             </div>
@@ -155,8 +159,9 @@
               <div class="rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 p-5 space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div class="studio-label text-[#19231f]">
-                      🏛️ Click Any Year to Open Historical Snapshot on Wayback Machine
+                    <div class="studio-label text-[#19231f] inline-flex items-center gap-1.5">
+                      <StudioIcon name="archive" size={13} />
+                      <span>Click Any Year to Open Historical Snapshot on Wayback Machine</span>
                     </div>
                     <p class="text-xs text-[#48534e]">
                       Direct links to archived snapshots of <strong>{report.domain}</strong> across its history
