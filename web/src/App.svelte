@@ -519,8 +519,23 @@
   }
 </script>
 
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape' && moreToolsOpen) {
+      moreToolsOpen = false;
+    }
+  }}
+  onclick={(e) => {
+    if (!moreToolsOpen) return;
+    const target = e.target as HTMLElement | null;
+    if (target && !target.closest('[data-burger-menu]')) {
+      moreToolsOpen = false;
+    }
+  }}
+/>
+
 <div class="min-h-dvh flex flex-col pb-20">
-  <!-- RESPONSIVE FLOATING NAVIGATION: First 3 Primary Tools + "More Tools" Dropdown -->
+  <!-- RESPONSIVE FLOATING NAVIGATION: First 3 Primary Tools + Burger Menu -->
   <div class="sticky top-3 z-40 px-3 sm:px-6 print:hidden">
     <header
       class="relative mx-auto max-w-7xl rounded-2xl xl:rounded-full bg-[#fffdf8]/95 backdrop-blur-md border-[1.5px] border-[#19231f] px-3.5 py-2.5 xl:py-2 shadow-[0_4px_0_#19231f,0_14px_30px_rgba(25,35,31,0.08)] flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2 overflow-visible"
@@ -575,7 +590,7 @@
         </div>
       </div>
 
-      <!-- Mode Strip: First 3 Tools Visible + "More Tools" Dropdown -->
+      <!-- Mode Strip: Only First 3 Tools Visible + Burger Menu Button for Remaining Tools -->
       <nav
         aria-label="Primary Studio Modes"
         class="relative w-full xl:w-auto flex flex-wrap xl:flex-nowrap items-center justify-center gap-1 bg-[#f4f1e9] p-1 rounded-2xl xl:rounded-full border border-[#19231f]/15 overflow-visible"
@@ -625,33 +640,31 @@
           03. Site Tree
         </button>
 
-        <!-- More Tools Dropdown Trigger -->
-        <div class="relative">
+        <!-- Burger Menu Trigger for Remaining Tools (04–08) -->
+        <div class="relative" data-burger-menu>
           <button
             type="button"
+            aria-label="Open more studio tools burger menu"
             aria-expanded={moreToolsOpen}
+            title={activeMoreTool ? `Active: ${activeMoreTool.code}. ${activeMoreTool.label} (Click for all tools)` : 'More Studio Tools (Traffic, Ports & TLS, Robots, Social Meta, Vault)'}
             onclick={() => (moreToolsOpen = !moreToolsOpen)}
-            class="px-3.5 py-1.5 rounded-full text-xs font-display font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 shrink-0 {activeMoreTool
-              ? 'bg-[#19231f] text-[#dffc78]'
+            class="h-8 px-2.5 rounded-full text-xs font-display font-semibold transition-all cursor-pointer inline-flex items-center justify-center gap-1.5 shrink-0 border {activeMoreTool
+              ? 'bg-[#19231f] text-[#dffc78] border-[#19231f]'
               : moreToolsOpen
-                ? 'bg-[#d9d6fc] text-[#19231f]'
-                : 'text-[#19231f] hover:bg-[#fffdf8]'}"
+                ? 'bg-[#dffc78] text-[#19231f] border-[#19231f]'
+                : 'bg-[#fffdf8] text-[#19231f] border-[#19231f]/20 hover:border-[#19231f]'}"
           >
-            <span>
-              {activeMoreTool
-                ? `${activeMoreTool.code}. ${activeMoreTool.label}`
-                : 'More Tools'}
-            </span>
-            <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-[#dffc78] text-[#19231f] font-bold">
-              5
-            </span>
-            <StudioIcon name="chevron-down" size={12} />
+            <StudioIcon name={moreToolsOpen ? 'close' : 'burger'} size={15} />
+            {#if activeMoreTool}
+              <span class="text-[11px] font-bold">{activeMoreTool.code}</span>
+              <span class="w-1.5 h-1.5 rounded-full bg-[#dffc78]"></span>
+            {/if}
           </button>
 
           {#if moreToolsOpen}
             <div
               role="menu"
-              class="absolute right-0 xl:left-0 mt-2.5 w-80 sm:w-96 rounded-2xl border-2 border-[#19231f] bg-[#fffdf8] p-2 shadow-[0_18px_45px_rgba(25,35,31,0.22)] z-50"
+              class="absolute right-0 mt-2.5 w-80 sm:w-96 rounded-2xl border-2 border-[#19231f] bg-[#fffdf8] p-2.5 shadow-[0_18px_45px_rgba(25,35,31,0.22)] z-50"
             >
               <div class="flex items-center justify-between px-3 py-1.5 border-b border-[#19231f]/10">
                 <span class="font-display text-[11px] font-bold uppercase tracking-wider text-[#19231f]/55">
