@@ -13,6 +13,7 @@ import (
 	"github.com/rny/scanner/internal/domain"
 	"github.com/rny/scanner/internal/jobs"
 	"github.com/rny/scanner/internal/recon"
+	"github.com/rny/scanner/internal/traffic"
 	"github.com/rny/scanner/internal/watchlist"
 	"github.com/rny/scanner/internal/webintel"
 )
@@ -49,6 +50,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/crawl", s.withCORS(s.handleCrawl))
 	mux.HandleFunc("/api/robots", s.withCORS(s.handleRobots))
 	mux.HandleFunc("/api/meta", s.withCORS(s.handleMeta))
+	mux.HandleFunc("/api/traffic", s.withCORS(s.handleTraffic))
 	mux.HandleFunc("/api/parallel-suite", s.withCORS(s.handleParallelSuite))
 	mux.HandleFunc("/api/jobs", s.withCORS(s.handleJobs))
 	mux.HandleFunc("/api/jobs/cancel", s.withCORS(s.handleJobCancel))
@@ -340,15 +342,64 @@ func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	val := domain.ValidateTarget(target)
+	if !val.Valid {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":      val.Error,
+			"suggestion": val.Suggestion,
+		})
+		return
+	}
+
 	baseCtx, baseCancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer baseCancel()
 
-	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "meta", "Social Meta & Ad/Tracker Inspection", target, 4)
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "meta", "Social Meta & Ad/Tracker Inspection", val.Normalized, 4)
 	defer jobCancel()
 	s.Jobs.UpdateProgress(job.ID, 55, "Extracting OpenGraph/Twitter cards & scanning Ad/Tracker scripts…")
 
-	report := webintel.InspectMetaAndSocial(jobCtx, target)
+	report := webintel.InspectMetaAndSocial(jobCtx, val.Normalized)
 	summary := fmt.Sprintf("Social Grade %s · Trackers Grade %s (%d detected)", report.SocialGrade, report.Trackers.PrivacyGrade, report.Trackers.TotalDetected)
+	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
+
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	target := strings.TrimSpace(r.URL.Query().Get("domain"))
+	if target == "" {
+		target = strings.TrimSpace(r.URL.Query().Get("target"))
+	}
+	if target == "" && r.Method == http.MethodPost {
+		var body struct {
+			Domain string `json:"domain"`
+			Target string `json:"target"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Domain != "" {
+			target = body.Domain
+		} else {
+			target = body.Target
+		}
+	}
+	val := domain.ValidateTarget(target)
+	if !val.Valid {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":      val.Error,
+			"suggestion": val.Suggestion,
+		})
+		return
+	}
+
+	baseCtx, baseCancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer baseCancel()
+
+	job, jobCtx, jobCancel := s.Jobs.CreateJobWithCancel(baseCtx, "traffic", "Traffic & Popularity Intelligence", val.Host, 6)
+	defer jobCancel()
+	s.Jobs.UpdateProgress(job.ID, 50, "Correlating Tranco Top-1M + Cloudflare Radar + Index Footprint…")
+
+	report := traffic.EstimateDomainTraffic(jobCtx, val.Host)
+	summary := fmt.Sprintf("%s · %s · %s", report.DomainPopularity, report.EstimatedTrafficRange, report.PopularityTrend)
 	s.Jobs.CompleteJob(job.ID, summary, report.DurationMs, report)
 
 	writeJSON(w, http.StatusOK, report)
@@ -363,15 +414,19 @@ func (s *Server) handleParallelSuite(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		target = body.Domain
 	}
-	if target == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain is required"})
+	val := domain.ValidateTarget(target)
+	if !val.Valid {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":      val.Error,
+			"suggestion": val.Suggestion,
+		})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
 
-	_, suite := s.Jobs.RunParallelSuite(ctx, target)
+	_, suite := s.Jobs.RunParallelSuite(ctx, val.Host)
 	writeJSON(w, http.StatusOK, suite)
 }
 

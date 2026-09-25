@@ -20,6 +20,8 @@
     onCheckHistory: (domain: string) => void;
     onRunRecon: (domain: string) => void;
     onCrawlDomain: (domain: string) => void;
+    onCheckTraffic?: (domain: string) => void;
+    onPrepareReport?: (domain: string) => void;
     onToggleSave: (domain: string, available: boolean) => void;
     savedDomainsSet: Set<string>;
   }
@@ -33,6 +35,8 @@
     onCheckHistory,
     onRunRecon,
     onCrawlDomain,
+    onCheckTraffic,
+    onPrepareReport,
     onToggleSave,
     savedDomainsSet,
   }: Props = $props();
@@ -730,7 +734,29 @@
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2.5 pt-2">
+            {#if !activeItem.available && onCheckTraffic}
+              <button
+                type="button"
+                onclick={() => activeItem && onCheckTraffic(activeItem.domain)}
+                class="w-full py-2.5 px-4 rounded-2xl text-xs font-display font-bold bg-[#19231f] hover:bg-[#5366e8] text-[#dffc78] border border-[#19231f] transition-all cursor-pointer inline-flex items-center justify-center gap-2 shadow-sm"
+              >
+                <StudioIcon name="chart" class="w-3.5 h-3.5" />
+                <span>Check Registered Site Traffic & Global Rank →</span>
+              </button>
+            {/if}
+
+            {#if onPrepareReport}
+              <button
+                type="button"
+                onclick={() => activeItem && onPrepareReport(activeItem.domain)}
+                class="w-full py-2.5 px-4 rounded-2xl text-xs font-display font-bold bg-[#dffc78] hover:bg-[#d9d6fc] text-[#19231f] border-[1.5px] border-[#19231f] transition-all cursor-pointer inline-flex items-center justify-center gap-2"
+              >
+                <StudioIcon name="sparkle" class="w-3.5 h-3.5" />
+                <span>Prepare Full PDF Report ({activeItem.domain})</span>
+              </button>
+            {/if}
+
+            <div class="grid grid-cols-2 gap-2.5 pt-1">
               <button
                 type="button"
                 onclick={() => activeItem && onCheckHistory(activeItem.domain)}

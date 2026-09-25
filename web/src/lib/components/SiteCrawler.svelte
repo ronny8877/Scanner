@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { CrawlReport, SiteNode, PageInfo } from '../types';
+  import { validateDomainOrUrl } from '../validation';
   import TreeItem from './TreeItem.svelte';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
   import { motionCard } from '../motion';
 
   interface Props {
@@ -21,12 +23,14 @@
   let depthPreset = $state<string>('2');
   let customDepth = $state<number>(4);
   let selectedPath = $state('/');
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
 
   const maxPages = $derived(pagePreset === 'custom' ? Math.max(5, Math.min(300, Number(customPages) || 50)) : Number(pagePreset));
   const maxDepth = $derived(depthPreset === 'custom' ? Math.max(1, Math.min(8, Number(customDepth) || 4)) : Number(depthPreset));
   const isAggressiveCrawl = $derived(maxPages > 35 || maxDepth > 3);
 
-  const sampleSites = ['svelte.dev/docs/kit', 'svelte.dev', 'golang.org', 'cloudflare.com'];
+  const sampleSites = ['svelte.dev/docs/kit', 'svelte.dev', 'golang.org', 'cloudflare.com', 'outbid.lol'];
 
   $effect(() => {
     if (report?.seedPath) {
@@ -40,11 +44,22 @@
     report?.pages.find((p) => p.path === selectedPath) || report?.pages[0]
   );
 
+  function triggerCrawl(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain or URL.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    targetUrl = check.normalizedTarget;
+    onRunCrawl({ targetUrl: check.normalizedTarget, maxPages, maxDepth });
+  }
+
   function submitCrawl(e: Event) {
     e.preventDefault();
-    if (targetUrl.trim()) {
-      onRunCrawl({ targetUrl: targetUrl.trim(), maxPages, maxDepth });
-    }
+    triggerCrawl(targetUrl);
   }
 
   function handleNodeSelect(node: SiteNode) {
@@ -73,6 +88,12 @@
         id="crawl-url"
         type="text"
         bind:value={targetUrl}
+        oninput={() => {
+          if (validationError) {
+            validationError = null;
+            validationSuggestion = null;
+          }
+        }}
         placeholder="Enter domain or exact starting URL path (e.g. svelte.dev/docs/kit, golang.org/doc)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
       />
@@ -141,6 +162,19 @@
         </button>
       </div>
     </div>
+
+    <ValidationBanner
+      error={validationError}
+      suggestion={validationSuggestion}
+      onApplySuggestion={(fixed) => {
+        targetUrl = fixed;
+        triggerCrawl(fixed);
+      }}
+      onDismiss={() => {
+        validationError = null;
+        validationSuggestion = null;
+      }}
+    />
 
     <!-- Aggressive Crawl Bot-Prevention Warning Banner -->
     {#if isAggressiveCrawl}

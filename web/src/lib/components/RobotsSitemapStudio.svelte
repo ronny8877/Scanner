@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { RobotsSitemapReport } from '../types';
+  import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import StudioIcon from './StudioIcon.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
   import { motionCard } from '../motion';
 
   interface Props {
@@ -19,6 +21,8 @@
   let sitemapSearch = $state('');
   let showRawRobots = $state(false);
   let showAllEntries = $state(false);
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
 
   const sampleTargets = ['svelte.dev', 'golang.org', 'github.com', 'cloudflare.com', 'vercel.com'];
 
@@ -47,11 +51,22 @@
     (report?.botMatrix ?? []).filter((b) => b.status === 'PARTIAL').length
   );
 
+  function triggerCheck(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain or URL.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    targetInput = check.normalizedDomain;
+    onRunCheck(check.normalizedDomain);
+  }
+
   function handleSubmit(e: Event) {
     e.preventDefault();
-    if (targetInput.trim()) {
-      onRunCheck(targetInput.trim());
-    }
+    triggerCheck(targetInput);
   }
 </script>
 
@@ -61,7 +76,7 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
         <h2 id="robots-sitemap-heading" class="studio-label">
-          05 // Robots.txt Crawler Governance & Sitemap.xml Update Inspector
+          06 // Robots.txt Crawler Governance & Sitemap.xml Update Inspector
         </h2>
         <p class="text-sm text-[#48534e] mt-1">
           Inspect which AI/LLM &amp; Search crawlers are blocked, audit disallowed route rules, and verify XML Sitemap update timestamps (`&lt;lastmod&gt;`).
@@ -76,6 +91,12 @@
       <input
         type="text"
         bind:value={targetInput}
+        oninput={() => {
+          if (validationError) {
+            validationError = null;
+            validationSuggestion = null;
+          }
+        }}
         placeholder="Enter domain or URL (e.g. svelte.dev, golang.org, github.com)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f]"
       />
@@ -87,6 +108,19 @@
         {loading ? 'Auditing Robots & Sitemaps…' : 'Inspect Robots & Sitemap'}
       </button>
     </div>
+
+    <ValidationBanner
+      error={validationError}
+      suggestion={validationSuggestion}
+      onApplySuggestion={(fixed) => {
+        targetInput = fixed;
+        triggerCheck(fixed);
+      }}
+      onDismiss={() => {
+        validationError = null;
+        validationSuggestion = null;
+      }}
+    />
 
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-xs text-[#6d7873]">Quick reference domain:</span>

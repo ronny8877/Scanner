@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -268,8 +269,12 @@ func fetchAndParsePage(
 	if err != nil {
 		return info, nil, nil, "", nil
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Scanner-Site-Structure-Bot/2.0)")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -293,7 +298,10 @@ func fetchAndParsePage(
 		headers = append(headers, "CDN: Cloudflare")
 	}
 	if vercel := resp.Header.Get("X-Vercel-Id"); vercel != "" {
-		headers = append(headers, "Platform: Vercel")
+		headers = append(headers, "Platform: Vercel Edge")
+	}
+	if vMit := resp.Header.Get("X-Vercel-Mitigated"); vMit != "" {
+		headers = append(headers, "Edge Shield: Vercel Challenge ("+vMit+")")
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 300*1024))
@@ -310,6 +318,19 @@ func fetchAndParsePage(
 	}
 	if m := reDesc.FindStringSubmatch(html); len(m) > 1 {
 		info.Description = cleanText(m[1])
+	}
+
+	// If edge firewall challenged the request (e.g. outbid.lol HTTP 429 Vercel Challenge), label cleanly
+	if resp.StatusCode == 429 || resp.StatusCode == 403 || resp.Header.Get("X-Vercel-Mitigated") != "" || strings.Contains(strings.ToLower(info.Title), "security checkpoint") || strings.Contains(strings.ToLower(info.Title), "just a moment") {
+		shieldLabel := "Edge WAF Challenge"
+		if resp.Header.Get("X-Vercel-Id") != "" || resp.Header.Get("X-Vercel-Mitigated") != "" {
+			shieldLabel = "Vercel Security Checkpoint (Active Edge Shield)"
+		} else if resp.Header.Get("CF-Ray") != "" {
+			shieldLabel = "Cloudflare Bot Mitigation Shield"
+		}
+		info.Title = fmt.Sprintf("%s%s — Protected Route (%s)", rootHost, relPath, shieldLabel)
+		info.H1 = shieldLabel
+		info.Description = fmt.Sprintf("Origin route %s is actively protected by %s (HTTP %d).", relPath, shieldLabel, resp.StatusCode)
 	}
 
 	basePageURL, _ := url.Parse(targetURL)

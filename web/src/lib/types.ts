@@ -369,10 +369,59 @@ export interface Job {
   result?: unknown;
 }
 
+export interface RankPoint {
+  date: string;
+  rank: number;
+}
+
+export interface TrafficSignal {
+  source: string;
+  value: string;
+  weight: string;
+  description: string;
+}
+
+export interface TrafficReport {
+  domain: string;
+  checkedAt: string;
+  durationMs: number;
+  isRegistered: boolean;
+  isRanked: boolean;
+  trancoRank: number;
+  popularityTier: string;
+  cloudflareBucket: string;
+  estimatedMonthlyRange: string;
+  estimatedDailyRange: string;
+  confidenceLevel: string;
+  trendDirection: 'RISING' | 'STABLE' | 'COOLING' | string;
+  trendLabel: string;
+  rankDelta30d: number;
+  topLocations: string[];
+  rankHistory?: RankPoint[];
+  sitemapPagesCount: number;
+  subdomainCount: number;
+  waybackYearsCount: number;
+  edgeNetwork: string;
+  signals: TrafficSignal[];
+  methodologyNote: string;
+}
+
 export interface ParallelSuiteResult {
   domain: string;
+  generatedAt?: string;
   inquiry: DomainInquiry;
   history: HistoryReport;
+  traffic: TrafficReport;
   recon: ReconReport;
   crawl: CrawlReport;
+  robots: RobotsSitemapReport;
+  meta: MetaSocialReport;
 }
+
+export interface SavedExecutiveReport {
+  id: string;
+  domain: string;
+  generatedAt: string;
+  suite: ParallelSuiteResult;
+}
+

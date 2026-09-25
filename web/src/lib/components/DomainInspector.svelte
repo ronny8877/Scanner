@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { DomainInquiry } from '../types';
   import { motionCard } from '../motion';
+  import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import StudioIcon from './StudioIcon.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
 
   interface Props {
     inquiry: DomainInquiry | null;
@@ -12,6 +14,7 @@
     onCheckHistory: (domain: string) => void;
     onRunRecon: (domain: string) => void;
     onCrawlDomain: (domain: string) => void;
+    onPrepareReport?: (domain: string) => void;
     onToggleSave: (domain: string, available: boolean) => void;
     savedDomainsSet: Set<string>;
   }
@@ -24,10 +27,13 @@
     onCheckHistory,
     onRunRecon,
     onCrawlDomain,
+    onPrepareReport,
     onToggleSave,
     savedDomainsSet,
   }: Props = $props();
   let domainInput = $state('svelte.dev');
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
 
   const quickExamples = ['svelte.dev', 'agent.co', 'golang.org', 'linear.app', 'veltrixhq.ai'];
 
@@ -37,11 +43,22 @@
     }
   });
 
+  function triggerInspect(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain name.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    domainInput = check.normalizedDomain;
+    onInspect(check.normalizedDomain);
+  }
+
   function handleSubmit(e: Event) {
     e.preventDefault();
-    if (domainInput.trim()) {
-      onInspect(domainInput.trim());
-    }
+    triggerInspect(domainInput);
   }
 
   function formatDate(iso?: string) {
@@ -81,6 +98,12 @@
           id="inspect-domain"
           type="text"
           bind:value={domainInput}
+          oninput={() => {
+            if (validationError) {
+              validationError = null;
+              validationSuggestion = null;
+            }
+          }}
           placeholder="Enter domain name (e.g. svelte.dev, agent.co)..."
           class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
         />
@@ -91,7 +114,39 @@
         >
           {loading ? 'Querying Registry…' : 'Inspect Dossier →'}
         </button>
+        {#if onPrepareReport}
+          <button
+            type="button"
+            disabled={loading}
+            onclick={() => {
+              const check = validateDomainOrUrl(domainInput);
+              if (!check.valid) {
+                validationError = check.error || 'Please enter a valid domain name.';
+                validationSuggestion = check.suggestion || null;
+                return;
+              }
+              onPrepareReport(check.normalizedDomain);
+            }}
+            class="studio-btn-ink inline-flex items-center gap-1.5 px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            <StudioIcon name="sparkle" size={13} />
+            Prepare Report
+          </button>
+        {/if}
       </div>
+
+      <ValidationBanner
+        error={validationError}
+        suggestion={validationSuggestion}
+        onApplySuggestion={(fixed) => {
+          domainInput = fixed;
+          triggerInspect(fixed);
+        }}
+        onDismiss={() => {
+          validationError = null;
+          validationSuggestion = null;
+        }}
+      />
 
       <div class="flex flex-wrap items-center gap-2 pt-0.5">
         <span class="text-xs text-[#6d7873]">Inspect real domains:</span>

@@ -284,7 +284,35 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 	)
 
 	takeoverProviders := []string{
-		"github.io", "s3.amazonaws.com", "herokuapp.com", "azurewebsites.net", "pantheonsite.io", "ghost.io",
+		"github.io", "s3.amazonaws.com", "herokuapp.com", "azurewebsites.net",
+		"pantheonsite.io", "ghost.io", "vercel-dns.com", " cname.vercel-dns.com",
+	}
+
+	// Step 1: Detect Wildcard DNS (*.baseDomain) using random canary hostnames
+	wildcardIPs := make(map[string]bool)
+	var wildcardCNAME string
+	canaryCtx, cancelCanary := context.WithTimeout(ctx, 1200*time.Millisecond)
+	for _, canary := range []string{"_wildcard-canary-9821x." + baseDomain, "_nx-probe-4719z." + baseDomain} {
+		if cn, err := net.DefaultResolver.LookupCNAME(canaryCtx, canary); err == nil {
+			cleanCn := strings.TrimSuffix(strings.ToLower(cn), ".")
+			if cleanCn != canary {
+				wildcardCNAME = cleanCn
+			}
+		}
+		if ips, err := net.DefaultResolver.LookupHost(canaryCtx, canary); err == nil {
+			for _, ip := range ips {
+				wildcardIPs[ip] = true
+			}
+		}
+	}
+	cancelCanary()
+	hasWildcardDNS := len(wildcardIPs) > 0
+
+	httpClient := &http.Client{
+		Timeout: 1400 * time.Millisecond,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // Do not follow redirects blindly to root domain
+		},
 	}
 
 	for _, sub := range commonSubPrefixes {
@@ -292,7 +320,7 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 		go func(prefix string) {
 			defer wg.Done()
 			fqdn := prefix + "." + baseDomain
-			dnsCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			dnsCtx, cancel := context.WithTimeout(ctx, 1400*time.Millisecond)
 			defer cancel()
 
 			var cnameStr string
@@ -304,29 +332,87 @@ func discoverSubdomainsParallel(ctx context.Context, baseDomain string) []Subdom
 			}
 
 			ips, err := net.DefaultResolver.LookupHost(dnsCtx, fqdn)
-			if err == nil && len(ips) > 0 {
-				var cleanIPs []string
-				for i, ip := range ips {
-					if i >= 2 {
-						break
+			if err != nil || len(ips) == 0 {
+				// Check if it has a CNAME that failed to resolve IP (true dangling CNAME takeover candidate!)
+				if cnameStr != "" {
+					for _, prov := range takeoverProviders {
+						if strings.Contains(cnameStr, prov) {
+							mu.Lock()
+							hits = append(hits, SubdomainHit{
+								Subdomain:    fqdn,
+								IPs:          []string{},
+								CNAME:        cnameStr,
+								TakeoverRisk: "HIGH RISK: Dangling CNAME (" + prov + " — NXDOMAIN)",
+							})
+							mu.Unlock()
+							return
+						}
 					}
+				}
+				return
+			}
+
+			// Step 2: Check if all resolved IPs match the Wildcard DNS canary
+			allMatchWildcard := hasWildcardDNS
+			var cleanIPs []string
+			for i, ip := range ips {
+				if !wildcardIPs[ip] {
+					allMatchWildcard = false
+				}
+				if i < 2 {
 					cleanIPs = append(cleanIPs, ip)
 				}
-				risk := "Safe (Active IP Resolution)"
-				for _, prov := range takeoverProviders {
-					if strings.Contains(cnameStr, prov) {
-						risk = "External Cloud CNAME (" + prov + ")"
+			}
+
+			// If wildcard DNS is active and this subdomain has no distinct IP or distinct CNAME,
+			// only keep "www" if it responds cleanly; filter out phantom subdomains (admin, grafana, etc.)
+			if allMatchWildcard && (cnameStr == "" || cnameStr == wildcardCNAME) {
+				if prefix != "www" {
+					return
+				}
+			}
+
+			// Step 3: Verify live service responsiveness & filter out 404 / deployment-not-found ghosts
+			if prefix != "mail" && prefix != "smtp" {
+				probeReq, reqErr := http.NewRequestWithContext(dnsCtx, http.MethodGet, "https://"+fqdn, nil)
+				if reqErr == nil {
+					probeReq.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+					resp, httpErr := httpClient.Do(probeReq)
+					if httpErr != nil {
+						// Try HTTP port 80 before discarding
+						probeReq80, _ := http.NewRequestWithContext(dnsCtx, http.MethodGet, "http://"+fqdn, nil)
+						resp, httpErr = httpClient.Do(probeReq80)
+					}
+					if httpErr != nil {
+						// Does not respond to HTTPS or HTTP at all — skip non-responsive subdomain
+						return
+					}
+					statusCode := resp.StatusCode
+					vercelError := resp.Header.Get("x-vercel-error")
+					resp.Body.Close()
+
+					// Discard 404 Not Found, 502/504 Bad Gateway, 530 Cloudflare DNS Error, or Vercel DEPLOYMENT_NOT_FOUND
+					if statusCode == 404 || statusCode == 410 || statusCode == 502 || statusCode == 530 || vercelError != "" {
+						return
 					}
 				}
-				mu.Lock()
-				hits = append(hits, SubdomainHit{
-					Subdomain:    fqdn,
-					IPs:          cleanIPs,
-					CNAME:        cnameStr,
-					TakeoverRisk: risk,
-				})
-				mu.Unlock()
 			}
+
+			risk := "Verified Active Endpoint"
+			for _, prov := range takeoverProviders {
+				if strings.Contains(cnameStr, prov) {
+					risk = "External Cloud CNAME (" + prov + ")"
+				}
+			}
+
+			mu.Lock()
+			hits = append(hits, SubdomainHit{
+				Subdomain:    fqdn,
+				IPs:          cleanIPs,
+				CNAME:        cnameStr,
+				TakeoverRisk: risk,
+			})
+			mu.Unlock()
 		}(sub)
 	}
 

@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { MetaSocialReport } from '../types';
+  import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
   import { motionCard } from '../motion';
 
   interface Props {
@@ -16,8 +18,10 @@
 
   let targetInput = $state('svelte.dev');
   let activePlatform = $state<'all' | 'discord' | 'telegram' | 'whatsapp' | 'facebook'>('all');
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
 
-  const sampleUrls = ['svelte.dev', 'github.com/sveltejs/svelte', 'golang.org', 'cloudflare.com'];
+  const sampleUrls = ['svelte.dev', 'outbid.lol', 'github.com/sveltejs/svelte', 'golang.org', 'cloudflare.com'];
 
   $effect(() => {
     if (report?.targetUrl) {
@@ -25,11 +29,22 @@
     }
   });
 
+  function triggerMetaCheck(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain or URL.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    targetInput = check.normalizedTarget;
+    onRunMetaCheck(check.normalizedTarget);
+  }
+
   function handleSubmit(e: Event) {
     e.preventDefault();
-    if (targetInput.trim()) {
-      onRunMetaCheck(targetInput.trim());
-    }
+    triggerMetaCheck(targetInput);
   }
 </script>
 
@@ -39,14 +54,14 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
         <h2 id="social-meta-heading" class="studio-label">
-          06 // Social Meta Tag Inspector, Platform Card Previews & Tracker Telemetry
+          07 // Social Meta Tag Inspector, Platform Card Previews & Tracker Telemetry
         </h2>
         <p class="text-sm text-[#48534e] mt-1">
           Preview how any domain or sub-route renders on <strong>Discord, Telegram, WhatsApp &amp; Facebook</strong>, audit OpenGraph tags, and inspect Ad Networks &amp; Analytics trackers.
         </p>
       </div>
       <span class="px-3 py-1 rounded-full text-xs font-mono bg-[#d9d6fc] border border-[#19231f] font-bold">
-        Discord · Telegram · WhatsApp · FB + Ad/Tracker Radar
+        Discord · Telegram · WhatsApp · FB + Edge-Shield Aware
       </span>
     </div>
 
@@ -54,7 +69,13 @@
       <input
         type="text"
         bind:value={targetInput}
-        placeholder="Enter any URL or sub-path (e.g. svelte.dev, github.com/sveltejs/svelte, golang.org)..."
+        oninput={() => {
+          if (validationError) {
+            validationError = null;
+            validationSuggestion = null;
+          }
+        }}
+        placeholder="Enter any URL or sub-path (e.g. svelte.dev, outbid.lol, golang.org)..."
         class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f]"
       />
       <button
@@ -66,6 +87,19 @@
       </button>
     </div>
 
+    <ValidationBanner
+      error={validationError}
+      suggestion={validationSuggestion}
+      onApplySuggestion={(fixed) => {
+        targetInput = fixed;
+        triggerMetaCheck(fixed);
+      }}
+      onDismiss={() => {
+        validationError = null;
+        validationSuggestion = null;
+      }}
+    />
+
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-xs text-[#6d7873]">Sample URLs:</span>
       {#each sampleUrls as u}
@@ -73,7 +107,7 @@
           type="button"
           onclick={() => {
             targetInput = u;
-            onRunMetaCheck(u);
+            triggerMetaCheck(u);
           }}
           class="px-3 py-1 rounded-full text-xs font-mono bg-[#f4f1e9] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f]/15 transition-colors cursor-pointer"
         >

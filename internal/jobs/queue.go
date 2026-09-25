@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/rny/scanner/internal/crawler"
 	"github.com/rny/scanner/internal/domain"
 	"github.com/rny/scanner/internal/recon"
+	"github.com/rny/scanner/internal/traffic"
+	"github.com/rny/scanner/internal/webintel"
 )
 
 // JobStatus represents the lifecycle state of a queued scan task.
@@ -41,13 +44,19 @@ type Job struct {
 	cancelFunc    context.CancelFunc `json:"-"`
 }
 
-// ParallelSuiteResult holds the combined output of running all 4 engines concurrently on a target.
+// ParallelSuiteResult holds the complete Executive Domain Dossier compiled across all 7 engines in parallel.
 type ParallelSuiteResult struct {
-	Domain  string               `json:"domain"`
-	Inquiry domain.DomainInquiry `json:"inquiry"`
-	History domain.HistoryReport `json:"history"`
-	Recon   recon.ReconReport    `json:"recon"`
-	Crawl   crawler.CrawlReport  `json:"crawl"`
+	ReportID    string                       `json:"reportId"`
+	Domain      string                       `json:"domain"`
+	GeneratedAt string                       `json:"generatedAt"`
+	DurationMs  int64                        `json:"durationMs"`
+	Inquiry     domain.DomainInquiry         `json:"inquiry"`
+	History     domain.HistoryReport         `json:"history"`
+	Traffic     traffic.TrafficReport        `json:"traffic"`
+	Recon       recon.ReconReport            `json:"recon"`
+	Crawl       crawler.CrawlReport          `json:"crawl"`
+	Robots      webintel.RobotsSitemapReport `json:"robots"`
+	Meta        webintel.MetaSocialReport    `json:"meta"`
 }
 
 // Manager coordinates concurrent job execution, cancellation, and telemetry.
@@ -202,7 +211,7 @@ func (m *Manager) Get(id string) (*Job, bool) {
 func (m *Manager) RunParallelSuite(parentCtx context.Context, rawTarget string) (*Job, ParallelSuiteResult) {
 	start := time.Now()
 	clean := domain.CleanDomainName(rawTarget)
-	job, ctx, cancel := m.CreateJobWithCancel(parentCtx, "parallel_suite", "Full Parallel Surface & History Suite", clean, 32)
+	job, ctx, cancel := m.CreateJobWithCancel(parentCtx, "parallel_suite", "Executive Domain Intelligence Report", clean, 42)
 	defer cancel()
 
 	var (
@@ -210,25 +219,28 @@ func (m *Manager) RunParallelSuite(parentCtx context.Context, rawTarget string) 
 		doneCount  int32
 		inquiryRes domain.DomainInquiry
 		historyRes domain.HistoryReport
+		trafficRes traffic.TrafficReport
 		reconRes   recon.ReconReport
 		crawlRes   crawler.CrawlReport
+		robotsRes  webintel.RobotsSitemapReport
+		metaRes    webintel.MetaSocialReport
 	)
 
 	advanceStep := func(stepLabel string) {
 		c := atomic.AddInt32(&doneCount, 1)
-		pct := int(c) * 25
+		pct := int(c) * 14
 		if pct >= 100 {
-			pct = 95
+			pct = 96
 		}
-		m.UpdateProgress(job.ID, pct, fmt.Sprintf("Finished %s (%d/4 pipelines complete)", stepLabel, c))
+		m.UpdateProgress(job.ID, pct, fmt.Sprintf("Completed %s (%d/7 report sections)", stepLabel, c))
 	}
 
-	wg.Add(4)
+	wg.Add(7)
 
 	go func() {
 		defer wg.Done()
 		inquiryRes = domain.InspectDomain(ctx, clean)
-		advanceStep("RDAP & DNS Dossier")
+		advanceStep("RDAP, WHOIS & Valuation")
 	}()
 
 	go func() {
@@ -239,8 +251,14 @@ func (m *Manager) RunParallelSuite(parentCtx context.Context, rawTarget string) 
 
 	go func() {
 		defer wg.Done()
+		trafficRes = traffic.EstimateDomainTraffic(ctx, clean)
+		advanceStep("Tranco & Radar Traffic Intelligence")
+	}()
+
+	go func() {
+		defer wg.Done()
 		reconRes = recon.RunRecon(ctx, clean)
-		advanceStep("Port, TLS & Security Audit")
+		advanceStep("Port, TLS & Subdomain Recon")
 	}()
 
 	go func() {
@@ -253,24 +271,43 @@ func (m *Manager) RunParallelSuite(parentCtx context.Context, rawTarget string) 
 		advanceStep("Site Cartography Tree")
 	}()
 
+	go func() {
+		defer wg.Done()
+		robotsRes = webintel.InspectRobotsAndSitemap(ctx, clean)
+		advanceStep("Robots.txt & Sitemap.xml Audit")
+	}()
+
+	go func() {
+		defer wg.Done()
+		metaRes = webintel.InspectMetaAndSocial(ctx, clean)
+		advanceStep("Social Cards & Tracker Telemetry")
+	}()
+
 	wg.Wait()
 
+	duration := time.Since(start).Milliseconds()
 	suite := ParallelSuiteResult{
-		Domain:  clean,
-		Inquiry: inquiryRes,
-		History: historyRes,
-		Recon:   reconRes,
-		Crawl:   crawlRes,
+		ReportID:    fmt.Sprintf("REP-%s-%d", strings.ToUpper(strings.Split(clean, ".")[0]), time.Now().Unix()%10000),
+		Domain:      clean,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		DurationMs:  duration,
+		Inquiry:     inquiryRes,
+		History:     historyRes,
+		Traffic:     trafficRes,
+		Recon:       reconRes,
+		Crawl:       crawlRes,
+		Robots:      robotsRes,
+		Meta:        metaRes,
 	}
 
 	summary := fmt.Sprintf(
-		"%s · %d open ports · %d Wayback snaps · %d routes",
+		"%s · %s · %s · Grade %s",
 		inquiryRes.StatusSummary,
-		reconRes.OpenPortsCount,
-		historyRes.WaybackSnapshots,
-		crawlRes.PagesCrawled,
+		inquiryRes.Valuation.EstimatedDisplay,
+		trafficRes.EstimatedTrafficRange,
+		reconRes.SecurityGrade,
 	)
 
-	completedJob := m.CompleteJob(job.ID, summary, time.Since(start).Milliseconds(), suite)
+	completedJob := m.CompleteJob(job.ID, summary, duration, suite)
 	return completedJob, suite
 }

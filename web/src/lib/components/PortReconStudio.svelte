@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { ReconReport } from '../types';
   import { motionCard } from '../motion';
+  import { validateDomainOrUrl } from '../validation';
   import LoadingProgressBanner from './LoadingProgressBanner.svelte';
   import TrackerPostureCard from './TrackerPostureCard.svelte';
   import StudioIcon from './StudioIcon.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
 
   interface Props {
     report: ReconReport | null;
@@ -28,6 +30,8 @@
   }: Props = $props();
 
   let targetInput = $state('svelte.dev');
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
 
   const quickTargets = ['svelte.dev', 'golang.org', 'cloudflare.com', 'linear.app'];
 
@@ -37,11 +41,35 @@
     }
   });
 
+  function triggerRecon(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain name.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    targetInput = check.normalizedDomain;
+    onRunRecon(check.normalizedDomain);
+  }
+
+  function triggerPrepareReport(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain name.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    targetInput = check.normalizedDomain;
+    onRunFullSuite(check.normalizedDomain);
+  }
+
   function handleSubmit(e: Event) {
     e.preventDefault();
-    if (targetInput.trim()) {
-      onRunRecon(targetInput.trim());
-    }
+    triggerRecon(targetInput);
   }
 </script>
 
@@ -55,10 +83,10 @@
     <div class="flex-1 space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 id="port-recon-heading" class="studio-label">
-          04 // Parallel Port Scanner, TLS Handshake, Subdomain CNAME & Security Headers Audit
+          05 // Parallel Port Scanner, TLS Handshake, Verified Active Subdomains & Security Audit
         </h2>
         <span class="text-xs font-mono text-[#48534e]">
-          28 Concurrent Goroutines · 14 TCP Ports + TLS 1.3 + HTTP Headers + Takeover Check
+          Wildcard DNS Canary + Live HTTP Verification · Zero Phantom Subdomains
         </span>
       </div>
 
@@ -66,6 +94,12 @@
         <input
           type="text"
           bind:value={targetInput}
+          oninput={() => {
+            if (validationError) {
+              validationError = null;
+              validationSuggestion = null;
+            }
+          }}
           placeholder="Enter domain or host (e.g. svelte.dev, golang.org)..."
           class="flex-1 rounded-2xl bg-[#f4f1e9] border-[1.5px] border-[#19231f]/20 focus:border-[#19231f] px-4 py-3.5 text-base font-mono text-[#19231f] placeholder-[#6d7873]"
         />
@@ -82,15 +116,28 @@
           <button
             type="button"
             disabled={loading}
-            onclick={() => targetInput.trim() && onRunFullSuite(targetInput.trim())}
+            onclick={() => triggerPrepareReport(targetInput)}
             class="studio-btn-ink inline-flex items-center gap-1.5 px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50"
-            title="Run RDAP + Past History + Port Scan + Site Crawl all in parallel"
+            title="Run all intelligence pipelines in parallel and generate a full visual PDF-style report"
           >
-            <StudioIcon name="bolt" size={13} />
-            Run All 4 Engines in Parallel
+            <StudioIcon name="sparkle" size={13} />
+            Prepare Report
           </button>
         </div>
       </div>
+
+      <ValidationBanner
+        error={validationError}
+        suggestion={validationSuggestion}
+        onApplySuggestion={(fixed) => {
+          targetInput = fixed;
+          triggerRecon(fixed);
+        }}
+        onDismiss={() => {
+          validationError = null;
+          validationSuggestion = null;
+        }}
+      />
 
       <div class="flex flex-wrap items-center gap-2 pt-0.5">
         <span class="text-xs text-[#6d7873]">Quick infrastructure targets:</span>
@@ -99,7 +146,7 @@
             type="button"
             onclick={() => {
               targetInput = t;
-              onRunRecon(t);
+              triggerRecon(t);
             }}
             class="px-3 py-1 rounded-full text-xs font-mono bg-[#f4f1e9] hover:bg-[#dffc78] text-[#19231f] border border-[#19231f]/15 transition-colors cursor-pointer"
           >
