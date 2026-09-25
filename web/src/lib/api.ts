@@ -401,7 +401,7 @@ function evaluateLocal(domainStr: string, isAvailable = true): Valuation {
   };
 }
 
-function synthesizeScanReport(params: {
+export function synthesizeScanReport(params: {
   keywords: string[];
   tlds: string[];
   dictionaryPack?: string;
@@ -456,7 +456,7 @@ function synthesizeScanReport(params: {
   };
 }
 
-function synthesizeDomainInquiry(raw: string): DomainInquiry {
+export function synthesizeDomainInquiry(raw: string): DomainInquiry {
   const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   const full = clean.includes('.') ? clean : `${clean}.com`;
   const isAvailable = full.includes('hq') || full.includes('veltrix');
@@ -562,7 +562,7 @@ function synthesizeHistoryReport(raw: string): HistoryReport {
   };
 }
 
-function synthesizeReconReport(raw: string): ReconReport {
+export function synthesizeReconReport(raw: string): ReconReport {
   const clean = raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   return {
     domain: clean,
@@ -639,7 +639,7 @@ function synthesizeReconReport(raw: string): ReconReport {
   };
 }
 
-function synthesizeCrawlReport(rawUrl: string): CrawlReport {
+export function synthesizeCrawlReport(rawUrl: string): CrawlReport {
   const clean = rawUrl.replace(/^https?:\/\//, '');
   const parts = clean.split('/');
   const host = parts[0] || 'svelte.dev';
@@ -708,7 +708,7 @@ function synthesizeCrawlReport(rawUrl: string): CrawlReport {
   };
 }
 
-function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
+export function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
   const host = rawTarget.replace(/^https?:\/\//, '').split('/')[0] || 'svelte.dev';
   return {
     targetUrl: `https://${host}`,
@@ -754,7 +754,7 @@ function synthesizeRobotsSitemapReport(rawTarget: string): RobotsSitemapReport {
   };
 }
 
-function synthesizeMetaSocialReport(rawTarget: string): MetaSocialReport {
+export function synthesizeMetaSocialReport(rawTarget: string): MetaSocialReport {
   const clean = rawTarget.replace(/^https?:\/\//, '');
   const host = clean.split('/')[0] || 'svelte.dev';
   return {

@@ -7,21 +7,18 @@ function prefersReducedMotion(): boolean {
 
 /**
  * Svelte action (`use:motionCard={{ delay: 0.05 }}`) that animates a bento card
- * with Motion One (`motion`) while respecting reduced-motion settings.
+ * subtly without ever setting opacity to 0 (preventing full-page tab-switch flicker).
  */
 export function motionCard(node: HTMLElement, opts: { delay?: number; y?: number } = {}) {
   if (prefersReducedMotion()) return;
 
-  const y = opts.y ?? 14;
-  const delay = opts.delay ?? 0;
-
-  node.style.opacity = '0';
-  node.style.transform = `translateY(${y}px)`;
+  const y = Math.min(opts.y ?? 6, 6);
+  const delay = Math.min(opts.delay ?? 0, 0.04);
 
   const controls = animate(
     node,
-    { opacity: [0, 1], transform: [`translateY(${y}px)`, 'translateY(0px)'] },
-    { duration: 0.38, delay, easing: [0.22, 1, 0.36, 1] }
+    { opacity: [0.96, 1], transform: [`translateY(${y}px)`, 'translateY(0px)'] },
+    { duration: 0.18, delay, easing: [0.22, 1, 0.36, 1] }
   );
 
   return {
@@ -43,8 +40,8 @@ export function motionStaggerList(node: HTMLElement) {
     const targetChildren = children.slice(0, 18);
     animate(
       targetChildren,
-      { opacity: [0.35, 1], transform: ['translateY(6px)', 'translateY(0px)'] },
-      { duration: 0.26, delay: stagger(0.025), easing: 'ease-out' }
+      { opacity: [0.92, 1], transform: ['translateY(4px)', 'translateY(0px)'] },
+      { duration: 0.16, delay: stagger(0.015), easing: 'ease-out' }
     );
   };
 

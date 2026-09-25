@@ -26,6 +26,12 @@
     saveDomainToVault,
     removeDomainFromVault,
     recheckWatchlistParallel,
+    synthesizeScanReport,
+    synthesizeDomainInquiry,
+    synthesizeCrawlReport,
+    synthesizeReconReport,
+    synthesizeRobotsSitemapReport,
+    synthesizeMetaSocialReport,
   } from './lib/api';
   import type {
     ScanReport,
@@ -46,28 +52,37 @@
   let copiedCli = $state<boolean>(false);
   let copiedGuideIndex = $state<number | null>(null);
 
-  // Mode 1: Bulk Availability & Dictionary Scan
-  let scanReport = $state<ScanReport | null>(null);
+  // Mode 1: Bulk Availability & Dictionary Scan (Initialized synchronously — zero network request on screen load)
+  let scanReport = $state<ScanReport | null>(
+    synthesizeScanReport({
+      keywords: ['veltrix', 'nova'],
+      dictionaryPack: 'none',
+      tlds: ['com', 'ai', 'io', 'dev', 'co', 'app', 'xyz', 'sh'],
+      mutations: true,
+      onlyAvailable: false,
+      minScore: 0,
+    })
+  );
   let scanLoading = $state<boolean>(false);
 
-  // Mode 2: RDAP & DNS Dossier
-  let inquiryData = $state<DomainInquiry | null>(null);
+  // Mode 2: RDAP & DNS Dossier (Initialized synchronously — zero network request on tab switch)
+  let inquiryData = $state<DomainInquiry | null>(synthesizeDomainInquiry('svelte.dev'));
   let inspectLoading = $state<boolean>(false);
 
-  // Mode 3: Site Cartography
-  let crawlReport = $state<CrawlReport | null>(null);
+  // Mode 3: Site Cartography (Initialized synchronously — zero network request on tab switch)
+  let crawlReport = $state<CrawlReport | null>(synthesizeCrawlReport('svelte.dev/docs/kit'));
   let crawlLoading = $state<boolean>(false);
 
-  // Mode 4: Port, TLS & Security Surface Recon
-  let reconReport = $state<ReconReport | null>(null);
+  // Mode 4: Port, TLS & Security Surface Recon (Initialized synchronously — zero network request on tab switch)
+  let reconReport = $state<ReconReport | null>(synthesizeReconReport('svelte.dev'));
   let reconLoading = $state<boolean>(false);
 
-  // Mode 5: Robots.txt & Sitemap.xml Governance
-  let robotsReport = $state<RobotsSitemapReport | null>(null);
+  // Mode 5: Robots.txt & Sitemap.xml Governance (Initialized synchronously — zero network request on tab switch)
+  let robotsReport = $state<RobotsSitemapReport | null>(synthesizeRobotsSitemapReport('svelte.dev'));
   let robotsLoading = $state<boolean>(false);
 
-  // Mode 6: Social Meta Cards & Ad/Tracker Radar
-  let metaReport = $state<MetaSocialReport | null>(null);
+  // Mode 6: Social Meta Cards & Ad/Tracker Radar (Initialized synchronously — zero network request on tab switch)
+  let metaReport = $state<MetaSocialReport | null>(synthesizeMetaSocialReport('svelte.dev'));
   let metaLoading = $state<boolean>(false);
 
   // Mode 7: Saved Watchlist Vault
@@ -131,17 +146,15 @@
   );
 
   onMount(async () => {
-    backendOnline = await checkBackendHealth();
-    savedDomains = await fetchWatchlist();
-    await handleRunScan({
-      keywords: ['veltrix', 'nova'],
-      dictionaryPack: 'none',
-      tlds: ['com', 'ai', 'io', 'dev', 'co', 'app', 'xyz', 'sh'],
-      mutations: true,
-      onlyAvailable: false,
-      minScore: 0,
-    });
-    jobList = await fetchJobQueue();
+    // Only check health and load saved vault items quietly — never dispatch scan/inspect requests on screen load
+    const [online, vault, jobs] = await Promise.all([
+      checkBackendHealth(),
+      fetchWatchlist(),
+      fetchJobQueue(),
+    ]);
+    backendOnline = online;
+    savedDomains = vault;
+    jobList = jobs;
   });
 
   async function refreshJobs() {
@@ -417,15 +430,18 @@
         </div>
       </div>
 
-      <!-- Mode Strip: Flex-Wrap on Mobile/Tablet, Compact Single Row on Desktop (NEVER scrolls horizontally) -->
+      <!-- Mode Strip: Pure Instant View Switching (Zero Network Requests on Tab Click) -->
       <nav
         aria-label="Primary Studio Modes"
         class="w-full xl:w-auto flex flex-wrap xl:flex-nowrap items-center justify-center gap-1 bg-[#f4f1e9] p-1 rounded-2xl xl:rounded-full border border-[#19231f]/15 overflow-hidden"
       >
         <button
           type="button"
-          onclick={() => (activeMode = 'scan')}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          onclick={() => {
+            activeMode = 'scan';
+            cliPreview = 'scanner scan veltrix nova --tlds com,ai,io,dev,co,app,xyz,sh --mutations';
+          }}
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'scan'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -437,9 +453,9 @@
           type="button"
           onclick={() => {
             activeMode = 'inspect';
-            if (!inquiryData) handleInspectDomain('svelte.dev');
+            cliPreview = `scanner inspect ${inquiryData?.domain || 'svelte.dev'}`;
           }}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'inspect'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -451,9 +467,9 @@
           type="button"
           onclick={() => {
             activeMode = 'crawl';
-            if (!crawlReport) handleCrawlDomain('svelte.dev/docs/kit');
+            cliPreview = `scanner crawl ${crawlReport?.host || 'svelte.dev/docs/kit'} --pages 20 --depth 2`;
           }}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'crawl'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -465,9 +481,9 @@
           type="button"
           onclick={() => {
             activeMode = 'recon';
-            if (!reconReport) handleRunRecon('svelte.dev');
+            cliPreview = `scanner recon ${reconReport?.domain || 'svelte.dev'}`;
           }}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'recon'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -479,9 +495,9 @@
           type="button"
           onclick={() => {
             activeMode = 'robots';
-            if (!robotsReport) handleRunRobotsCheck('svelte.dev');
+            cliPreview = `scanner robots ${robotsReport?.host || 'svelte.dev'}`;
           }}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'robots'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -493,9 +509,9 @@
           type="button"
           onclick={() => {
             activeMode = 'meta';
-            if (!metaReport) handleRunMetaCheck('svelte.dev');
+            cliPreview = `scanner meta ${metaReport?.host || 'svelte.dev'}`;
           }}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer shrink-0 {activeMode ===
           'meta'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -506,7 +522,7 @@
         <button
           type="button"
           onclick={() => (activeMode = 'vault')}
-          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-all cursor-pointer inline-flex items-center gap-1.5 shrink-0 {activeMode ===
+          class="px-2.5 py-1.5 rounded-full text-[11.5px] font-display font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 shrink-0 {activeMode ===
           'vault'
             ? 'bg-[#19231f] text-[#fffdf8]'
             : 'text-[#48534e] hover:text-[#19231f]'}"
@@ -626,9 +642,9 @@
     </div>
   </div>
 
-  <!-- ACTIVE WORKBENCH BENTO -->
+  <!-- ACTIVE WORKBENCH BENTO (All 7 panels stay mounted in DOM so switching tabs is 0ms with zero flicker) -->
   <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 space-y-12">
-    {#if activeMode === 'scan'}
+    <div class={activeMode === 'scan' ? 'block' : 'hidden'}>
       <AvailabilityScanner
         report={scanReport}
         loading={scanLoading}
@@ -641,7 +657,9 @@
         onToggleSave={handleToggleSave}
         {savedDomainsSet}
       />
-    {:else if activeMode === 'inspect'}
+    </div>
+
+    <div class={activeMode === 'inspect' ? 'block' : 'hidden'}>
       <DomainInspector
         inquiry={inquiryData}
         loading={inspectLoading}
@@ -653,7 +671,9 @@
         onToggleSave={handleToggleSave}
         {savedDomainsSet}
       />
-    {:else if activeMode === 'crawl'}
+    </div>
+
+    <div class={activeMode === 'crawl' ? 'block' : 'hidden'}>
       <SiteCrawler
         report={crawlReport}
         loading={crawlLoading}
@@ -661,7 +681,9 @@
         onCancelJob={() => handleCancelJob()}
         onInspectDomain={handleInspectDomain}
       />
-    {:else if activeMode === 'recon'}
+    </div>
+
+    <div class={activeMode === 'recon' ? 'block' : 'hidden'}>
       <PortReconStudio
         report={reconReport}
         loading={reconLoading}
@@ -672,7 +694,9 @@
         onSaveDomain={handleToggleSave}
         {savedDomainsSet}
       />
-    {:else if activeMode === 'robots'}
+    </div>
+
+    <div class={activeMode === 'robots' ? 'block' : 'hidden'}>
       <RobotsSitemapStudio
         report={robotsReport}
         loading={robotsLoading}
@@ -681,7 +705,9 @@
         onCrawlUrl={handleCrawlDomain}
         onInspectMeta={handleRunMetaCheck}
       />
-    {:else if activeMode === 'meta'}
+    </div>
+
+    <div class={activeMode === 'meta' ? 'block' : 'hidden'}>
       <SocialMetaStudio
         report={metaReport}
         loading={metaLoading}
@@ -689,7 +715,9 @@
         onCancelJob={() => handleCancelJob()}
         onCrawlUrl={handleCrawlDomain}
       />
-    {:else if activeMode === 'vault'}
+    </div>
+
+    <div class={activeMode === 'vault' ? 'block' : 'hidden'}>
       <WatchlistVault
         items={savedDomains}
         rechecking={recheckingVault}
@@ -700,7 +728,7 @@
         onCheckHistory={handleCheckHistory}
         onRunRecon={handleRunRecon}
       />
-    {/if}
+    </div>
 
     <!-- BOTTOM STUDIO REFERENCE BENTO: Truncated Commands with Copy Button (Zero Horizontal Scroll) -->
     <section aria-labelledby="cli-field-guide" class="pt-6 border-t border-[#19231f]/12 space-y-5">
