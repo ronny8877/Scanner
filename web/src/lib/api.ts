@@ -302,39 +302,82 @@ const tldRegFees: Record<string, number> = {
   tools: 24, codes: 28, xyz: 2, me: 16, vc: 55, finance: 35, store: 8, shop: 8,
 };
 
+const flagshipLookup: Record<string, { minUsd: number; maxUsd: number; label: string }> = {
+  'cloudflare.com': { minUsd: 5000000, maxUsd: 25000000, label: '$5,000,000+ · Global Flagship' },
+  'google.com': { minUsd: 50000000, maxUsd: 100000000, label: '$50,000,000+ · Global Flagship' },
+  'github.com': { minUsd: 10000000, maxUsd: 35000000, label: '$10,000,000+ · Global Flagship' },
+  'stripe.com': { minUsd: 10000000, maxUsd: 35000000, label: '$10,000,000+ · Global Flagship' },
+  'vercel.com': { minUsd: 2500000, maxUsd: 10000000, label: '$2,500,000+ · Global Flagship' },
+  'openai.com': { minUsd: 15000000, maxUsd: 50000000, label: '$15,000,000+ · Global Flagship' },
+  'svelte.dev': { minUsd: 450000, maxUsd: 1800000, label: '$450,000+ · Ecosystem Flagship' },
+  'golang.org': { minUsd: 650000, maxUsd: 2400000, label: '$650,000+ · Ecosystem Flagship' },
+  'linear.app': { minUsd: 850000, maxUsd: 3200000, label: '$850,000+ · Category Flagship' },
+  'agent.co': { minUsd: 35000, maxUsd: 125000, label: '$35,000 – $125,000' },
+};
+
 function evaluateLocal(domainStr: string, isAvailable = true): Valuation {
-  const [name = 'nova', tld = 'com'] = domainStr.toLowerCase().split('.');
+  const clean = domainStr.toLowerCase().trim();
+  const [name = 'nova', tld = 'com'] = clean.split('.');
   const regFee = tldRegFees[tld] ?? 12;
-  const lenScore = name.length <= 4 ? 27 : name.length <= 6 ? 23 : name.length <= 8 ? 18 : 12;
+
+  if (flagshipLookup[clean]) {
+    const f = flagshipLookup[clean];
+    return {
+      score: 99,
+      tier: 'Global Enterprise Flagship',
+      regFeeUsd: regFee,
+      regFeeDisplay: `$${regFee}/yr Reg`,
+      estimatedMinUsd: f.minUsd,
+      estimatedMaxUsd: f.maxUsd,
+      estimatedDisplay: f.label,
+      lengthScore: 30,
+      tldScore: 25,
+      phoneticScore: 24,
+      keywordScore: 20,
+      isDictionaryWord: true,
+      highlights: [
+        'Global Tier-1 Internet & Enterprise Flagship Brand',
+        'Multi-decade institutional equity & authoritative Anycast DNS footprint',
+        `Category-defining .${tld} flagship asset`,
+      ],
+    };
+  }
+
+  const lenScore = name.length <= 4 ? 28 : name.length <= 6 ? 25 : name.length <= 8 ? 21 : 16;
   const tldMap: Record<string, number> = { com: 25, ai: 24, io: 21, dev: 19, co: 19, app: 18 };
   const tldScore = tldMap[tld] ?? 14;
   const phoneticScore = 21;
-  const keywordScore = 15;
-  const score = Math.min(99, lenScore + tldScore + phoneticScore + keywordScore);
+  const keywordScore = 17;
+  const score = Math.min(99, lenScore + tldScore + phoneticScore + keywordScore + (isAvailable ? 0 : 8));
 
   let tier = 'High-Potential Brandable';
-  let minUsd = 95;
-  let maxUsd = 340;
+  let minUsd = 120;
+  let maxUsd = 480;
   let estimatedDisplay = `$${regFee}/yr · Flip $${minUsd}–$${maxUsd}`;
 
   if (isAvailable) {
     if (score >= 84) {
       tier = 'Prime Unclaimed Gem';
-      minUsd = 350;
-      maxUsd = 1250;
-      estimatedDisplay = `$${regFee}/yr · Flip $350–$1,250`;
+      minUsd = 450;
+      maxUsd = 1850;
+      estimatedDisplay = `$${regFee}/yr · Flip $450–$1,850`;
     }
   } else {
-    if (name.length <= 5 && tld === 'com') {
-      tier = 'Institutional .COM Asset';
-      minUsd = 35000;
-      maxUsd = 140000;
-      estimatedDisplay = '$35,000 - $140,000+';
+    if (name.length <= 6 && tld === 'com') {
+      tier = 'Category-Killer .COM Asset';
+      minUsd = 180000;
+      maxUsd = 850000;
+      estimatedDisplay = '$180,000 – $850,000+';
+    } else if (tld === 'com') {
+      tier = 'Institutional Enterprise .COM';
+      minUsd = 65000;
+      maxUsd = 240000;
+      estimatedDisplay = '$65,000 – $240,000';
     } else {
       tier = 'Established Brand Domain';
-      minUsd = 1200;
-      maxUsd = 4200;
-      estimatedDisplay = '$1,200 - $4,200';
+      minUsd = 12000;
+      maxUsd = 42000;
+      estimatedDisplay = '$12,000 – $42,000';
     }
   }
 

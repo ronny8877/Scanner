@@ -201,7 +201,9 @@ func InspectDomain(ctx context.Context, rawDomain string) DomainInquiry {
 		}
 	}
 
-	inquiry.Valuation = EvaluateDomainWithStatus(cleanDomain, inquiry.Available)
+	ageYears := ComputeRegistrationAgeYears(inquiry.RegisteredAt)
+	hasEnterpriseDNS := len(inquiry.DNS.NS) >= 2 || len(inquiry.DNS.DMARC) > 0 || strings.Contains(inquiry.DNSSEC, "Signed")
+	inquiry.Valuation = EvaluateDomainWithTenure(cleanDomain, inquiry.Available, ageYears, hasEnterpriseDNS)
 	inquiry.CheckLatencyMs = time.Since(start).Milliseconds()
 	return inquiry
 }

@@ -66,7 +66,7 @@ func (s *Store) load() {
 			{"svelte.dev", false, "Reference architecture & benchmark domain", []string{"Benchmark", "Registered"}},
 		}
 		for _, st := range starters {
-			val := domain.EvaluateDomain(st.dom)
+			val := domain.EvaluateDomainWithStatus(st.dom, st.avail)
 			status := "Registered"
 			if st.avail {
 				status = "Available"
@@ -89,8 +89,17 @@ func (s *Store) load() {
 	var list []SavedDomain
 	if err := json.Unmarshal(data, &list); err == nil {
 		for _, item := range list {
+			ageYears := 0
+			if item.FirstSeenYear > 0 && item.FirstSeenYear <= time.Now().Year() {
+				ageYears = time.Now().Year() - item.FirstSeenYear
+			} else if !item.Available {
+				ageYears = 12
+			}
+			// Re-calibrate valuation with actual availability & tenure so legacy saved items stay accurate
+			item.Valuation = domain.EvaluateDomainWithTenure(item.Domain, item.Available, ageYears, !item.Available)
 			s.items[item.Domain] = item
 		}
+		_ = s.saveUnlocked()
 	}
 }
 
@@ -125,22 +134,43 @@ func (s *Store) List() []SavedDomain {
 	return s.listUnlocked()
 }
 
-// Upsert adds or updates a domain in the watchlist.
+// Upsert adds or updates a domain in the watchlist with accurate status and tenure valuation.
 func (s *Store) Upsert(rawDomain string, available *bool, notes string, tags []string) SavedDomain {
 	clean := domain.CleanDomainName(rawDomain)
 	now := time.Now().Format(time.RFC3339)
-	val := domain.EvaluateDomain(clean)
+
+	s.mu.RLock()
+	existing, exists := s.items[clean]
+	s.mu.RUnlock()
+
+	isAvail := true
+	ageYears := 0
+	var prevRegPtr *bool
+	firstSeenYear := existing.FirstSeenYear
+
+	if available != nil {
+		isAvail = *available
+		if !isAvail {
+			ageYears = 12
+		}
+	} else if exists {
+		isAvail = existing.Available
+		if !isAvail {
+			ageYears = 12
+		}
+	} else {
+		// Perform a fast live inspection when adding a brand-new domain without explicit availability
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		inq := domain.InspectDomain(ctx, clean)
+		cancel()
+		isAvail = inq.Available
+		ageYears = domain.ComputeRegistrationAgeYears(inq.RegisteredAt)
+	}
+
+	val := domain.EvaluateDomainWithTenure(clean, isAvail, ageYears, !isAvail)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	existing, exists := s.items[clean]
-	isAvail := true
-	if available != nil {
-		isAvail = *available
-	} else if exists {
-		isAvail = existing.Available
-	}
 
 	status := "Registered"
 	if isAvail {
@@ -164,6 +194,9 @@ func (s *Store) Upsert(rawDomain string, available *bool, notes string, tags []s
 			tags = []string{"Watch"}
 		}
 	}
+	if existing.PreviouslyRegistered != nil {
+		prevRegPtr = existing.PreviouslyRegistered
+	}
 
 	entry := SavedDomain{
 		Domain:               clean,
@@ -172,8 +205,8 @@ func (s *Store) Upsert(rawDomain string, available *bool, notes string, tags []s
 		Valuation:            val,
 		Notes:                strings.TrimSpace(notes),
 		Tags:                 tags,
-		PreviouslyRegistered: existing.PreviouslyRegistered,
-		FirstSeenYear:        existing.FirstSeenYear,
+		PreviouslyRegistered: prevRegPtr,
+		FirstSeenYear:        firstSeenYear,
 		SavedAt:              savedAt,
 		LastCheckedAt:        now,
 	}

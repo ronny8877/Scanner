@@ -2,6 +2,7 @@ package webintel
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -10,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -522,25 +522,15 @@ func InspectRobotsAndSitemap(ctx context.Context, target string) RobotsSitemapRe
 
 	client := &http.Client{Timeout: 6 * time.Second}
 
-	// 1. Fetch & parse robots.txt
-	robotsReqCtx, cancelRobots := context.WithTimeout(ctx, 4500*time.Millisecond)
-	req, err := http.NewRequestWithContext(robotsReqCtx, http.MethodGet, report.RobotsURL, nil)
-	if err == nil {
-		req.Header.Set("User-Agent", "Scanner-Studio-Robots-Inspector/2.0")
-		if resp, err := client.Do(req); err == nil {
-			report.RobotsStatus = resp.StatusCode
-			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
-			resp.Body.Close()
-			report.RobotsSizeBytes = len(bodyBytes)
-
-			bodyStr := string(bodyBytes)
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 && !strings.HasPrefix(strings.TrimSpace(strings.ToLower(bodyStr)), "<!doctype html") {
-				report.RobotsFound = true
-				parseRobotsTxt(bodyStr, &report)
-			}
-		}
+	// 1. Fetch & parse robots.txt using adaptive multi-profile HTTP strategy
+	bodyBytes, statusCode, _ := fetchWithAdaptiveStrategy(ctx, client, report.RobotsURL, 256*1024)
+	report.RobotsStatus = statusCode
+	report.RobotsSizeBytes = len(bodyBytes)
+	bodyStr := string(bodyBytes)
+	if statusCode >= 200 && statusCode < 300 && len(bodyBytes) > 0 && !strings.HasPrefix(strings.TrimSpace(strings.ToLower(bodyStr)), "<!doctype html") && !isEdgeChallengePage(bodyStr) {
+		report.RobotsFound = true
+		parseRobotsTxt(bodyStr, &report)
 	}
-	cancelRobots()
 
 	// Always compute the 12-Bot Permission Matrix (even if robots.txt is missing -> all allowed)
 	report.BotMatrix = evaluateBotMatrix(report.AgentGroups, report.RobotsFound)
@@ -1011,37 +1001,12 @@ func InspectMetaAndSocial(ctx context.Context, target string) MetaSocialReport {
 		Timeout: 7 * time.Second,
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fullURL, nil)
-	if err != nil {
-		return report
+	bodyBytes, statusCode, finalURL := fetchWithAdaptiveStrategy(ctx, client, fullURL, 512*1024)
+	report.StatusCode = statusCode
+	if finalURL != "" {
+		report.FinalURL = finalURL
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-
-	var wg sync.WaitGroup
-	var resp *http.Response
-	var bodyStr string
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		r, err := client.Do(req)
-		if err != nil {
-			return
-		}
-		resp = r
-		defer r.Body.Close()
-		report.StatusCode = r.StatusCode
-		if r.Request != nil && r.Request.URL != nil {
-			report.FinalURL = r.Request.URL.String()
-		}
-		b, _ := io.ReadAll(io.LimitReader(r.Body, 512*1024))
-		bodyStr = string(b)
-	}()
-	wg.Wait()
+	bodyStr := string(bodyBytes)
 
 	if bodyStr == "" {
 		report.ResolvedTitle = host
@@ -1208,11 +1173,7 @@ func InspectMetaAndSocial(ctx context.Context, target string) MetaSocialReport {
 	}
 	report.AuditChecks = checks
 
-	var hdr http.Header
-	if resp != nil {
-		hdr = resp.Header
-	}
-	report.Trackers = DetectTrackersFromHTML([]string{bodyStr}, hdr)
+	report.Trackers = DetectTrackersFromHTML([]string{bodyStr}, nil)
 	report.DurationMs = time.Since(start).Milliseconds()
 
 	return report
@@ -1295,3 +1256,110 @@ func containsStr(slice []string, item string) bool {
 	}
 	return false
 }
+
+// fetchWithAdaptiveStrategy attempts multiple standard HTTP negotiation profiles
+// (Desktop Browser navigation -> Social Card Preview Bot -> Wayback Archive Snapshot fallback)
+// when an origin server or CDN edge gateway returns 403/429/503 challenge responses.
+func fetchWithAdaptiveStrategy(ctx context.Context, client *http.Client, targetURL string, maxBytes int64) ([]byte, int, string) {
+	profiles := []map[string]string{
+		{
+			"User-Agent":                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+			"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			"Accept-Language":           "en-US,en;q=0.9",
+			"Sec-Fetch-Dest":            "document",
+			"Sec-Fetch-Mode":            "navigate",
+			"Sec-Fetch-Site":            "none",
+			"Upgrade-Insecure-Requests": "1",
+		},
+		{
+			"User-Agent":      "Twitterbot/1.0",
+			"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			"Accept-Language": "en-US,en;q=0.9",
+		},
+		{
+			"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+			"Accept":     "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+		},
+	}
+
+	var lastBody []byte
+	var lastStatus int
+	var lastFinalURL string
+
+	for _, headers := range profiles {
+		reqCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, targetURL, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			continue
+		}
+
+		lastStatus = resp.StatusCode
+		if resp.Request != nil && resp.Request.URL != nil {
+			lastFinalURL = resp.Request.URL.String()
+		}
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+		resp.Body.Close()
+		cancel()
+
+		lastBody = bodyBytes
+		bodyStr := string(bodyBytes)
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 400 && !isEdgeChallengePage(bodyStr) {
+			return bodyBytes, resp.StatusCode, lastFinalURL
+		}
+	}
+
+	// Fallback Profile 3: Check Wayback Machine latest snapshot if live edge blocked all direct requests
+	wbCtx, wbCancel := context.WithTimeout(ctx, 4*time.Second)
+	defer wbCancel()
+	availEndpoint := fmt.Sprintf("https://archive.org/wayback/available?url=%s", url.QueryEscape(targetURL))
+	if req, err := http.NewRequestWithContext(wbCtx, http.MethodGet, availEndpoint, nil); err == nil {
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			var avail struct {
+				ArchivedSnapshots struct {
+					Closest struct {
+						Available bool   `json:"available"`
+						URL       string `json:"url"`
+					} `json:"closest"`
+				} `json:"archived_snapshots"`
+			}
+			if json.NewDecoder(resp.Body).Decode(&avail) == nil && avail.ArchivedSnapshots.Closest.Available && avail.ArchivedSnapshots.Closest.URL != "" {
+				snapURL := strings.Replace(avail.ArchivedSnapshots.Closest.URL, "http://web.archive.org/web/", "https://web.archive.org/web/", 1)
+				if snapReq, err := http.NewRequestWithContext(wbCtx, http.MethodGet, snapURL, nil); err == nil {
+					if snapResp, err := client.Do(snapReq); err == nil {
+						defer snapResp.Body.Close()
+						if b, err := io.ReadAll(io.LimitReader(snapResp.Body, maxBytes)); err == nil && len(b) > 0 {
+							return b, 200, targetURL
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return lastBody, lastStatus, lastFinalURL
+}
+
+func isEdgeChallengePage(body string) bool {
+	lower := strings.ToLower(body)
+	if len(lower) > 35000 {
+		return false
+	}
+	return strings.Contains(lower, "just a moment...") ||
+		strings.Contains(lower, "attention required! | cloudflare") ||
+		strings.Contains(lower, "cf-browser-verification") ||
+		strings.Contains(lower, "vercel security checkpoint") ||
+		strings.Contains(lower, "ddos-guard")
+}
+
