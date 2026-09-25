@@ -1,27 +1,60 @@
 <script lang="ts">
   import type { Job } from '../types';
   import { motionCard } from '../motion';
+  import { validateDomainOrUrl } from '../validation';
   import StudioIcon from './StudioIcon.svelte';
+  import ValidationBanner from './ValidationBanner.svelte';
 
   interface Props {
     open: boolean;
     jobs: Job[];
+    defaultTarget?: string;
+    preparingDomain?: string | null;
     onClose: () => void;
     onSelectJob: (job: Job) => void;
     onDispatchParallelSuite: (target: string) => void;
     onCancelJob?: (jobId?: string) => void;
   }
 
-  let { open, jobs, onClose, onSelectJob, onDispatchParallelSuite, onCancelJob }: Props = $props();
+  let {
+    open,
+    jobs,
+    defaultTarget = 'svelte.dev',
+    preparingDomain = null,
+    onClose,
+    onSelectJob,
+    onDispatchParallelSuite,
+    onCancelJob,
+  }: Props = $props();
   let parallelTarget = $state('svelte.dev');
+  let validationError = $state<string | null>(null);
+  let validationSuggestion = $state<string | null>(null);
+
+  $effect(() => {
+    if (open && defaultTarget) {
+      parallelTarget = defaultTarget;
+    }
+  });
 
   const runningCount = $derived(jobs.filter((j) => j.status === 'RUNNING').length);
 
+  function triggerMakeReport(raw: string) {
+    const check = validateDomainOrUrl(raw);
+    if (!check.valid) {
+      validationError = check.error || 'Please enter a valid domain name.';
+      validationSuggestion = check.suggestion || null;
+      return;
+    }
+    validationError = null;
+    validationSuggestion = null;
+    const cleanDomain = check.normalizedDomain || check.host;
+    parallelTarget = cleanDomain;
+    onDispatchParallelSuite(cleanDomain);
+  }
+
   function submitSuite(e: Event) {
     e.preventDefault();
-    if (parallelTarget.trim()) {
-      onDispatchParallelSuite(parallelTarget.trim());
-    }
+    triggerMakeReport(parallelTarget);
   }
 </script>
 
@@ -71,25 +104,48 @@
         </div>
       </div>
 
-      <!-- Dispatch Multi-Pipeline Parallel Suite Form -->
+      <!-- Make Report (Multi-Pipeline Parallel Suite) Form -->
       <form onsubmit={submitSuite} class="p-5 bg-[#fffdf8] border-b border-[#19231f]/15 space-y-3">
-        <div class="flex items-center justify-between">
-          <span class="studio-label">Dispatch 4-Engine Parallel Suite (32 Workers)</span>
-          <span class="text-[11px] font-mono text-[#5366e8]">RDAP + Wayback/CT + Ports/TLS + Crawl</span>
+        <div class="flex items-center justify-between gap-2">
+          <span class="studio-label">Generate 360° Master Domain Report (32 Workers)</span>
+          <span class="text-[11px] font-mono text-[#5366e8]">RDAP + Traffic + Ports/RDP/TLS + Tech Stack</span>
         </div>
 
         <div class="flex gap-2">
           <input
             type="text"
             bind:value={parallelTarget}
-            placeholder="Target domain (e.g. svelte.dev, agent.co)..."
+            oninput={() => {
+              if (validationError) {
+                validationError = null;
+                validationSuggestion = null;
+              }
+            }}
+            placeholder="Target domain (e.g. svelte.dev, cloudflare.com)..."
             class="flex-1 rounded-full bg-[#f4f1e9] border border-[#19231f]/25 px-4 py-2 text-xs font-mono text-[#19231f]"
           />
-          <button type="submit" class="studio-btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-xs cursor-pointer shrink-0">
-            <StudioIcon name="bolt" size={12} />
-            Dispatch Suite
+          <button
+            type="submit"
+            disabled={Boolean(preparingDomain)}
+            class="studio-btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-xs cursor-pointer shrink-0 disabled:opacity-50"
+          >
+            <StudioIcon name="sparkle" size={12} />
+            <span>{preparingDomain ? `Making ${preparingDomain}…` : 'Make Report'}</span>
           </button>
         </div>
+
+        <ValidationBanner
+          error={validationError}
+          suggestion={validationSuggestion}
+          onApplySuggestion={(fixed) => {
+            parallelTarget = fixed;
+            triggerMakeReport(fixed);
+          }}
+          onDismiss={() => {
+            validationError = null;
+            validationSuggestion = null;
+          }}
+        />
       </form>
 
       <!-- Jobs List -->

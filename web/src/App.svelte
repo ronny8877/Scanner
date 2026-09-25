@@ -748,17 +748,6 @@
 
         <button
           type="button"
-          onclick={() => handlePrepareReport(inquiryData?.domain || reconReport?.domain || 'cloudflare.com')}
-          disabled={Boolean(preparingDomain)}
-          class="px-3 py-1.5 rounded-full text-xs font-display font-bold bg-[#dffc78] hover:bg-[#d9d6fc] text-[#19231f] border border-[#19231f] transition-colors cursor-pointer inline-flex items-center gap-1.5 shrink-0 disabled:opacity-50"
-          title="Prepare Full Visual PDF Dossier Report"
-        >
-          <StudioIcon name="sparkle" size={12} />
-          <span>{preparingDomain ? `Building ${preparingDomain}…` : 'Prepare Report'}</span>
-        </button>
-
-        <button
-          type="button"
           onclick={async () => {
             await refreshJobs();
             jobQueueOpen = true;
@@ -1026,6 +1015,8 @@
   <JobQueueDrawer
     open={jobQueueOpen}
     jobs={jobList}
+    defaultTarget={inquiryData?.domain || reconReport?.domain || trafficReport?.domain || 'svelte.dev'}
+    {preparingDomain}
     onClose={() => (jobQueueOpen = false)}
     onSelectJob={handleSelectJob}
     onDispatchParallelSuite={handlePrepareReport}

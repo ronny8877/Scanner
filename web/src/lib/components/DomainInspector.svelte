@@ -114,25 +114,6 @@
         >
           {loading ? 'Querying Registry…' : 'Inspect Dossier →'}
         </button>
-        {#if onPrepareReport}
-          <button
-            type="button"
-            disabled={loading}
-            onclick={() => {
-              const check = validateDomainOrUrl(domainInput);
-              if (!check.valid) {
-                validationError = check.error || 'Please enter a valid domain name.';
-                validationSuggestion = check.suggestion || null;
-                return;
-              }
-              onPrepareReport(check.normalizedDomain);
-            }}
-            class="studio-btn-ink inline-flex items-center gap-1.5 px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50 shrink-0"
-          >
-            <StudioIcon name="sparkle" size={13} />
-            Prepare Report
-          </button>
-        {/if}
       </div>
 
       <ValidationBanner

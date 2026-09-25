@@ -106,17 +106,6 @@
             Check Traffic & Rank
           {/if}
         </button>
-        {#if onPrepareReport}
-          <button
-            type="button"
-            onclick={handlePrepare}
-            disabled={loading}
-            class="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-[#19231f] bg-[#dffc78] px-4 py-2.5 font-display text-xs font-bold text-[#19231f] transition-transform hover:-translate-y-0.5 disabled:opacity-50"
-          >
-            <StudioIcon name="sparkle" class="h-3.5 w-3.5" />
-            Prepare Report
-          </button>
-        {/if}
       </form>
     </div>
 

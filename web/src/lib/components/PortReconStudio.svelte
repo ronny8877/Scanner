@@ -113,17 +113,6 @@
           >
             {loading ? 'Probing Surface…' : 'Scan Ports & Security →'}
           </button>
-
-          <button
-            type="button"
-            disabled={loading}
-            onclick={() => triggerPrepareReport(targetInput)}
-            class="studio-btn-ink inline-flex items-center gap-1.5 px-5 py-3.5 text-xs cursor-pointer disabled:opacity-50"
-            title="Run all intelligence pipelines in parallel and generate a full visual PDF-style report"
-          >
-            <StudioIcon name="sparkle" size={13} />
-            Prepare Report
-          </button>
         </div>
       </div>
 
