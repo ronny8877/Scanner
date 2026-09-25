@@ -2,6 +2,8 @@ export interface DomainValidationResult {
   valid: boolean;
   normalized: string;
   host: string;
+  normalizedDomain: string;
+  normalizedTarget: string;
   error?: string;
   suggestion?: string;
 }
@@ -14,12 +16,14 @@ const VALID_TLD_RE = /^[a-z]{2,24}$/;
  * Catches typos such as "xyz,com", spaces, missing TLDs, or invalid characters.
  */
 export function validateDomainOrUrl(raw: string): DomainValidationResult {
-  const trimmed = raw.trim();
-  if (!trimmed) {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || trimmed === 'undefined' || trimmed === 'null') {
     return {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: 'Please enter a valid domain name (for example, svelte.dev or cloudflare.com).',
     };
   }
@@ -31,6 +35,8 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: `Invalid domain "${trimmed}" — contains a comma (,) instead of a dot (.).`,
       suggestion,
     };
@@ -42,6 +48,8 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: `Invalid domain "${trimmed}" — domain names cannot contain spaces.`,
       suggestion,
     };
@@ -64,6 +72,8 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: `"${host}" is missing a Top-Level Domain extension (such as .com, .ai, .dev, .io).`,
       suggestion: `${host}.com`,
     };
@@ -75,6 +85,8 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: `Invalid domain "${host}" — contains consecutive dots.`,
       suggestion,
     };
@@ -88,6 +100,8 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
       valid: false,
       normalized: '',
       host: '',
+      normalizedDomain: '',
+      normalizedTarget: '',
       error: `Invalid TLD extension ".${tld}" in "${host}". Extensions must be 2–24 letters.`,
     };
   }
@@ -98,14 +112,19 @@ export function validateDomainOrUrl(raw: string): DomainValidationResult {
         valid: false,
         normalized: '',
         host: '',
+        normalizedDomain: '',
+        normalizedTarget: '',
         error: `Invalid hostname segment "${label}" in "${host}". Only letters, numbers, and interior hyphens are permitted.`,
       };
     }
   }
 
+  const fullNormalized = host + pathPart;
   return {
     valid: true,
-    normalized: host + pathPart,
+    normalized: fullNormalized,
     host,
+    normalizedDomain: host,
+    normalizedTarget: fullNormalized,
   };
 }

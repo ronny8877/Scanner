@@ -212,22 +212,30 @@ function normalizeTrafficReport(raw: Record<string, any>, fallbackDomain: string
 export async function runTrafficCheck(
   domainInput: string
 ): Promise<{ report: TrafficReport; liveBackend: boolean }> {
+  const safeDomain =
+    domainInput && domainInput !== 'undefined' && domainInput !== 'null'
+      ? domainInput.trim()
+      : 'cloudflare.com';
   const signal = createSignal();
   try {
-    const res = await fetch(`${API_BASE}/api/traffic?domain=${encodeURIComponent(domainInput)}`, {
+    const res = await fetch(`${API_BASE}/api/traffic?domain=${encodeURIComponent(safeDomain)}`, {
       signal,
     });
     if (!res.ok) throw new Error('Traffic API failed');
     const raw = await res.json();
-    return { report: normalizeTrafficReport(raw, domainInput), liveBackend: true };
+    return { report: normalizeTrafficReport(raw, safeDomain), liveBackend: true };
   } catch {
-    return { report: synthesizeTrafficReport(domainInput), liveBackend: false };
+    return { report: synthesizeTrafficReport(safeDomain), liveBackend: false };
   }
 }
 
 export async function runFullParallelSuite(
   domainInput: string
 ): Promise<{ suite: ParallelSuiteResult; liveBackend: boolean }> {
+  const safeDomain =
+    domainInput && domainInput !== 'undefined' && domainInput !== 'null'
+      ? domainInput.trim()
+      : 'cloudflare.com';
   const signal = createSignal();
   try {
     const res = await fetch(`${API_BASE}/api/parallel-suite`, {

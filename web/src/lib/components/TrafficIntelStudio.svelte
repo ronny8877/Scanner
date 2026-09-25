@@ -22,6 +22,12 @@
 
   const presets = ['cloudflare.com', 'svelte.dev', 'vercel.com', 'stripe.com', 'linear.app', 'outbid.lol'];
 
+  $effect(() => {
+    if (report?.domain && report.domain !== 'undefined') {
+      targetInput = report.domain;
+    }
+  });
+
   function handleSubmit(e: Event) {
     e.preventDefault();
     triggerCheck(targetInput);
@@ -36,8 +42,9 @@
     }
     validationError = null;
     validationSuggestion = null;
-    targetInput = check.normalizedDomain;
-    onRunTraffic(check.normalizedDomain);
+    const cleanDomain = check.normalizedDomain || check.host;
+    targetInput = cleanDomain;
+    onRunTraffic(cleanDomain);
   }
 
   function handlePrepare() {
@@ -49,8 +56,9 @@
     }
     validationError = null;
     validationSuggestion = null;
+    const cleanDomain = check.normalizedDomain || check.host;
     if (onPrepareReport) {
-      onPrepareReport(check.normalizedDomain);
+      onPrepareReport(cleanDomain);
     }
   }
 </script>
