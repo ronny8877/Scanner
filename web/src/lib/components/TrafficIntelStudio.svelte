@@ -144,45 +144,49 @@
 
   <!-- Executive 5-Line Traffic Summary Card + KPI Bento -->
   <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-    <!-- Left 5 cols: Editorial Specimen Traffic Card (Matches User's Exact Spec) -->
-    <div class="bento-card flex flex-col justify-between border-2 border-[#19231f] bg-[#19231f] p-6 text-[#fffdf8] sm:p-7 lg:col-span-5">
+    <!-- Left 5 cols: Editorial Specimen Traffic Card (High-Contrast Dark Ink on Surface) -->
+    <div class="bento-card flex flex-col justify-between p-6 text-[#19231f] sm:p-7 lg:col-span-5">
       <div>
         <div class="flex items-center justify-between gap-2">
-          <span class="rounded-full bg-[#dffc78] px-3 py-1 font-display text-[11px] font-bold uppercase tracking-wider text-[#19231f]">
+          <span class="rounded-full border border-[#19231f] bg-[#dffc78] px-3 py-1 font-display text-[11px] font-bold uppercase tracking-wider text-[#19231f]">
             {report.isRegistered ? 'Registered Site Telemetry' : 'Unregistered Domain'}
           </span>
-          <span class="font-display text-xs text-[#fffdf8]/60">{report.durationMs}ms probe</span>
+          <span class="rounded-full border border-[#19231f]/15 bg-[#f4f1e9] px-2.5 py-0.5 font-mono text-xs font-semibold text-[#19231f]">
+            {report.durationMs}ms probe
+          </span>
         </div>
 
-        <h3 class="mt-4 font-display text-2xl font-bold tracking-tight text-[#fffdf8] sm:text-3xl">
+        <h3 class="mt-4 font-display text-2xl font-bold tracking-tight text-[#19231f] sm:text-3xl">
           {report.domain}
         </h3>
-        <p class="mt-1 text-xs text-[#fffdf8]/65">
-          Edge Infrastructure: <span class="font-semibold text-[#dffc78]">{report.edgeNetwork}</span>
+        <p class="mt-1 text-xs text-[#48534e]">
+          Category / Edge: <span class="font-bold text-[#19231f]">{report.edgeNetwork}</span>
         </p>
 
-        <div class="mt-6 space-y-3.5 rounded-2xl border border-[#fffdf8]/15 bg-[#fffdf8]/5 p-5">
-          <div class="flex items-center justify-between gap-3 border-b border-[#fffdf8]/10 pb-2.5">
-            <span class="text-xs text-[#fffdf8]/65">Domain Popularity</span>
-            <span class="font-display text-sm font-bold text-[#dffc78]">{report.popularityTier}</span>
+        <div class="mt-5 space-y-3 rounded-2xl border-[1.5px] border-[#19231f]/20 bg-[#f4f1e9] p-5">
+          <div class="flex items-center justify-between gap-3 border-b border-[#19231f]/12 pb-2.5">
+            <span class="text-xs font-semibold text-[#48534e]">Domain Popularity</span>
+            <span class="font-display text-sm font-bold text-[#19231f]">{report.popularityTier}</span>
           </div>
 
-          <div class="flex items-center justify-between gap-3 border-b border-[#fffdf8]/10 pb-2.5">
-            <span class="text-xs text-[#fffdf8]/65">Cloudflare Rank</span>
-            <span class="font-display text-sm font-bold text-[#d9d6fc]">{report.cloudflareBucket}</span>
+          <div class="flex items-center justify-between gap-3 border-b border-[#19231f]/12 pb-2.5">
+            <span class="text-xs font-semibold text-[#48534e]">Cloudflare Rank</span>
+            <span class="rounded-lg border border-[#19231f]/25 bg-[#d9d6fc] px-2.5 py-0.5 font-display text-xs font-bold text-[#19231f]">
+              {report.cloudflareBucket}
+            </span>
           </div>
 
-          <div class="flex items-center justify-between gap-3 border-b border-[#fffdf8]/10 pb-2.5">
-            <span class="text-xs text-[#fffdf8]/65">Top Locations</span>
-            <span class="font-display text-xs font-bold text-[#fffdf8]">
+          <div class="flex items-center justify-between gap-3 border-b border-[#19231f]/12 pb-2.5">
+            <span class="text-xs font-semibold text-[#48534e]">Top Locations</span>
+            <span class="font-mono text-xs font-bold text-[#19231f]">
               {report.topLocations.map((loc) => loc.split('·')[0].trim()).join(' · ')}
             </span>
           </div>
 
-          <div class="flex items-center justify-between gap-3 border-b border-[#fffdf8]/10 pb-2.5">
-            <span class="text-xs text-[#fffdf8]/65">Popularity Trend</span>
+          <div class="flex items-center justify-between gap-3 border-b border-[#19231f]/12 pb-2.5">
+            <span class="text-xs font-semibold text-[#48534e]">Popularity Trend</span>
             <span
-              class="rounded-full px-2.5 py-0.5 font-display text-xs font-bold {report.trendDirection === 'RISING'
+              class="rounded-full border border-[#19231f] px-2.5 py-0.5 font-display text-xs font-bold {report.trendDirection === 'RISING'
                 ? 'bg-[#dffc78] text-[#19231f]'
                 : report.trendDirection === 'COOLING'
                   ? 'bg-[#ffc3a5] text-[#19231f]'
@@ -193,15 +197,17 @@
           </div>
 
           <div class="flex items-center justify-between gap-3 pt-1">
-            <span class="text-xs text-[#fffdf8]/65">Est. Traffic Range</span>
-            <span class="font-display text-base font-bold text-[#dffc78]">{report.estimatedMonthlyRange}</span>
+            <span class="text-xs font-semibold text-[#48534e]">Est. Traffic Range</span>
+            <span class="rounded-lg border border-[#19231f] bg-[#dffc78] px-2.5 py-1 font-display text-sm font-bold text-[#19231f]">
+              {report.estimatedMonthlyRange}
+            </span>
           </div>
         </div>
       </div>
 
-      <div class="mt-5 flex items-center justify-between border-t border-[#fffdf8]/10 pt-4 text-[11px] text-[#fffdf8]/60">
-        <span>Daily Band: <strong class="text-[#fffdf8]">{report.estimatedDailyRange}</strong></span>
-        <span>Confidence: <strong class="text-[#dffc78]">{report.confidenceLevel}</strong></span>
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[#19231f]/15 pt-4 text-xs text-[#48534e]">
+        <span>Daily Band: <strong class="text-[#19231f]">{report.estimatedDailyRange}</strong></span>
+        <span>Confidence: <strong class="text-[#19231f]">{report.confidenceLevel}</strong></span>
       </div>
     </div>
 
