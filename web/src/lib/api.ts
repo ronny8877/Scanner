@@ -640,6 +640,7 @@ export function synthesizeReconReport(raw: string): ReconReport {
       { port: 443, service: 'HTTPS', protocol: 'TCP', open: true, latencyMs: 18, category: 'Web', riskNote: 'Encrypted TLS web traffic' },
       { port: 8443, service: 'HTTPS Alt', protocol: 'TCP', open: true, latencyMs: 24, category: 'Web', riskNote: 'Alternative TLS web service' },
       { port: 22, service: 'SSH', protocol: 'TCP', open: false, latencyMs: 120, category: 'Remote Access' },
+      { port: 3389, service: 'RDP (Remote Desktop)', protocol: 'TCP', open: false, latencyMs: 120, category: 'Remote Access', riskNote: 'Windows Remote Desktop Protocol' },
       { port: 3306, service: 'MySQL', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },
       { port: 5432, service: 'PostgreSQL', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },
       { port: 6379, service: 'Redis', protocol: 'TCP', open: false, latencyMs: 120, category: 'Database' },

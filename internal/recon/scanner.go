@@ -96,6 +96,7 @@ var standardPorts = []portTarget{
 	{443, "HTTPS", "Web", "Encrypted TLS web traffic"},
 	{3000, "Node / Dev HTTP", "Web", "Development web server"},
 	{3306, "MySQL", "Database", "Database port exposed to public internet"},
+	{3389, "RDP (Remote Desktop)", "Remote Access", "Windows Remote Desktop Protocol administration port"},
 	{5432, "PostgreSQL", "Database", "Database port exposed to public internet"},
 	{6379, "Redis", "Database", "In-memory cache exposed to public internet"},
 	{8000, "HTTP API", "Web", "Alternative application server"},
